@@ -22,24 +22,31 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Unpack Wear module
+        run: |
+          if [ ! -f wear-src.zip ]; then
+            echo "wear-src.zip not found in the repository root"
+            exit 1
+          fi
+          rm -rf wear
+          unzip -q wear-src.zip
+          sed -i 's/include(":core", ":app")/include(":core", ":app", ":wear")/' settings.gradle.kts
+          grep -n include settings.gradle.kts
+
       - name: Make gradlew executable
         run: chmod +x gradlew
 
-      - name: Pick module to build
-        id: pick
-        run: |
-          if [ -d wear ]; then
-            echo "task=:wear:assembleDebug" >> "$GITHUB_OUTPUT"
-          else
-            echo "task=:app:assembleDebug" >> "$GITHUB_OUTPUT"
-          fi
+      - name: Build Wear debug APK
+        run: ./gradlew :wear:assembleDebug --stacktrace --console=plain
 
-      - name: Build debug APK
-        run: ./gradlew ${{ steps.pick.outputs.task }} --stacktrace --console=plain
+      # Faster, smaller build. If it fails, the debug APK above is still delivered.
+      - name: Build Wear optimized APK
+        continue-on-error: true
+        run: ./gradlew :wear:assembleRelease --stacktrace --console=plain
 
-      - name: Upload APK
+      - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: apk
-          path: "**/build/outputs/apk/debug/*.apk"
+          name: wear-apk
+          path: wear/build/outputs/apk/**/*.apk
           if-no-files-found: error
