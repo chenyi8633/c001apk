@@ -1,9 +1,9 @@
-# 酷安 Wear OS 0.6.5 / Galaxy Watch7 32-bit ARMv7 内嵌验证码版自动编译工作流
+# 酷安 Wear OS 0.6.6 / Galaxy Watch7 32-bit ARMv7 导航记忆、毛玻璃与性能优化版自动编译工作流
 # 使用：将本文件放到 .github/workflows/wear-apk.yml 并提交到 main。
 # 从你 Fork 仓库当前提交构建，保留 :core 网络层；手表端单独适配圆屏 UI。
 
-name: Build Coolapk Wear OS v0.6.5 - ARMv7 - In-App CAPTCHA - Galaxy Watch7
-run-name: Wear OS 0.6.5 单排一级导航、内嵌验证码、32 位 ARMv7 独立版
+name: Build Coolapk Wear OS v0.6.6 - ARMv7 - Frosted UI - Galaxy Watch7
+run-name: Wear OS 0.6.6 返回位置记忆、轻量毛玻璃、Wear OS 6/7、32 位 ARMv7
 
 on:
   push:
@@ -4493,7 +4493,403 @@ jobs:
           PY
           python3 /tmp/patch_wear_064.py
 
-      - name: Verify Wear OS 0.6.5 navigation, in-app CAPTCHA and ARMv7 ABI
+      - name: Apply Wear OS 0.6.6 back-stack, frosted glass and battery optimizations
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/patch_wear_066.py <<'PY'
+          from pathlib import Path
+          import re
+          
+          ROOT = Path('wear/src/main')
+          PKG = ROOT / 'kotlin/com/zailinn/c001apk/wear'
+          
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f'{label}: expected one match, found {count}')
+              return text.replace(old, new, 1)
+          
+          # 1) Keep the pager, each channel's scroll state, and loaded feed pages above the NavHost.
+          p = PKG / 'WearApp.kt'
+          s = p.read_text()
+          s = replace_once(s,
+              'import androidx.compose.foundation.isSystemInDarkTheme\n',
+              'import androidx.compose.foundation.isSystemInDarkTheme\nimport androidx.compose.foundation.rememberScrollState\nimport androidx.compose.foundation.pager.rememberPagerState\n',
+              'WearApp imports')
+          s = replace_once(s,
+              '        MaterialTheme(colorScheme = selectedScheme) {\n            Box(Modifier.fillMaxSize()) {',
+              '''        MaterialTheme(colorScheme = selectedScheme) {
+                      // These owners stay alive while a detail/settings route is on top of Home.
+                      // This keeps the exact channel, scroll offsets and already loaded pages on return.
+                      val configuredHome = container.getInt("home_channel", 1).coerceIn(1, 5)
+                      val channelPagerState = rememberPagerState(initialPage = configuredHome - 1) { 8 }
+                      val channelRailState = rememberScrollState()
+                      val channelListStates = listOf(
+                          rememberScalingLazyListState(), rememberScalingLazyListState(),
+                          rememberScalingLazyListState(), rememberScalingLazyListState(),
+                          rememberScalingLazyListState(), rememberScalingLazyListState(),
+                          rememberScalingLazyListState(), rememberScalingLazyListState(),
+                      )
+                      val retainedChannelFeeds = remember { mutableMapOf<String, PagedFeed>() }
+                      LaunchedEffect(configuredHome) {
+                          val page = configuredHome - 1
+                          if (channelPagerState.currentPage != page) channelPagerState.animateScrollToPage(page)
+                      }
+                      Box(Modifier.fillMaxSize()) {''',
+              'WearApp persistent nav state')
+          s = replace_once(s,
+              '''                            onOpenSettingsSection = { section -> navController.navigate("settings/$section") },
+                                  )''',
+              '''                            onOpenSettingsSection = { section -> navController.navigate("settings/$section") },
+                                      pagerState = channelPagerState,
+                                      railState = channelRailState,
+                                      listStates = channelListStates,
+                                      retainedFeeds = retainedChannelFeeds,
+                                  )''',
+              'WearApp ChannelHub args')
+          s = replace_once(s,
+              '''                            onOpenNotification = ::openNotification,
+                                  )
+                              }
+                              composable("settings")''',
+              '''                            onOpenNotification = ::openNotification,
+                                      listState = channelListStates[6],
+                                  )
+                              }
+                              composable("settings")''',
+              'WearApp MeScreen state')
+          s = replace_once(s,
+              '''                            onAbout = { navController.navigate("about") },
+                                  )
+                              }
+                              composable("settings/{section}")''',
+              '''                            onAbout = { navController.navigate("about") },
+                                      listState = channelListStates[7],
+                                  )
+                              }
+                              composable("settings/{section}")''',
+              'WearApp SettingsScreen state')
+          s = replace_once(s,
+              '''                        SettingsDetailScreen(container, entry.arguments?.getString("section").orEmpty(), ::openMineList)
+                              }''',
+              '''                        SettingsDetailScreen(
+                                      container = container,
+                                      section = entry.arguments?.getString("section").orEmpty(),
+                                      onOpenList = ::openMineList,
+                                      onBack = { navController.popBackStack() },
+                                  )
+                              }''',
+              'WearApp SettingsDetail back')
+          p.write_text(s)
+          
+          # 2) Reuse the parent-held pager and list/feeds instead of constructing them inside Home.
+          p = PKG / 'ChannelScreens.kt'
+          s = p.read_text()
+          s = s.replace('import androidx.compose.foundation.horizontalScroll\n', 'import androidx.compose.foundation.horizontalScroll\nimport androidx.compose.foundation.ScrollState\n')
+          s = s.replace('import androidx.compose.foundation.pager.HorizontalPager\nimport androidx.compose.foundation.pager.rememberPagerState\n', 'import androidx.compose.foundation.pager.HorizontalPager\nimport androidx.compose.foundation.pager.PagerState\n')
+          s = s.replace('import androidx.wear.compose.foundation.lazy.ScalingLazyColumn\n', 'import androidx.wear.compose.foundation.lazy.ScalingLazyColumn\nimport androidx.wear.compose.foundation.lazy.ScalingLazyListState\n')
+          s = replace_once(s,
+              '''    onOpenNotification: (String) -> Unit,
+              onOpenSettingsSection: (String) -> Unit,
+          ) {
+              // All eight destinations share one pager and one persistent horizontal rail.
+              val navItems = listOf("推荐", "热门", "话题", "数码", "酷图", "搜索", "我的", "设置")
+              val settingsRevision = container.settingsRevision
+              val configuredHome = container.getInt("home_channel", 1).coerceIn(1, 5)
+              val pager = rememberPagerState(initialPage = configuredHome - 1) { navItems.size }
+              val scope = rememberCoroutineScope()
+              val railState = rememberScrollState()
+          
+              LaunchedEffect(settingsRevision, configuredHome) {
+                  val page = configuredHome - 1
+                  if (pager.currentPage != page) pager.animateScrollToPage(page)
+              }
+          
+              Column(Modifier.fillMaxSize()) {
+                  Row(
+                      modifier = Modifier
+                          .fillMaxWidth()
+                          .horizontalScroll(railState)
+                          .padding(horizontal = 7.dp, vertical = 4.dp),
+                      horizontalArrangement = Arrangement.spacedBy(5.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                  ) {''',
+              '''    onOpenNotification: (String) -> Unit,
+              onOpenSettingsSection: (String) -> Unit,
+              pagerState: PagerState,
+              railState: ScrollState,
+              listStates: List<ScalingLazyListState>,
+              retainedFeeds: MutableMap<String, PagedFeed>,
+          ) {
+              // Parent-owned state survives detail routes, so returning restores the exact tab and list offset.
+              val navItems = listOf("推荐", "热门", "话题", "数码", "酷图", "搜索", "我的", "设置")
+              val pager = pagerState
+              val scope = rememberCoroutineScope()
+          
+              Column(Modifier.fillMaxSize()) {
+                  val glassShape = RoundedCornerShape(24.dp)
+                  androidx.compose.foundation.layout.Box(
+                      modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp)
+                          .clip(glassShape)
+                  ) {
+                      androidx.compose.foundation.layout.Box(
+                          modifier = Modifier.align(Alignment.TopStart).fillMaxWidth(0.72f).heightIn(min = 14.dp)
+                              .background(Brand.copy(alpha = 0.14f), RoundedCornerShape(24.dp))
+                              .then(Modifier),
+                      )
+                      Row(
+                          modifier = Modifier.fillMaxWidth()
+                              .background(Brush.verticalGradient(listOf(
+                                  MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.76f),
+                                  MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.58f),
+                                  MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.64f),
+                              )))
+                              .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.30f), glassShape)
+                              .horizontalScroll(railState)
+                              .padding(horizontal = 7.dp, vertical = 4.dp),
+                          horizontalArrangement = Arrangement.spacedBy(5.dp),
+                          verticalAlignment = Alignment.CenterVertically,
+                      ) {''',
+              'ChannelHub state and rail')
+          # Close new Box before pager. Replace end of the row block (specific context).
+          s = replace_once(s,
+              '''            }
+                  }
+          
+                  HorizontalPager(pager, Modifier.fillMaxSize()) { page ->''',
+              '''            }
+                      }
+                  }
+          
+                  HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 0) { page ->''',
+              'ChannelHub rail closure and pager')
+          s = s.replace('0 -> FeedChannel(container, "推荐", null, null, onOpenFeed, onOpenUser, onOpenTarget)', '0 -> FeedChannel(container, "推荐", null, null, onOpenFeed, onOpenUser, onOpenTarget, listStates[0], retainedFeeds)')
+          s = s.replace('1 -> FeedChannel(container, "热门", "/page?url=V9_HOME_TAB_RANKING", "热榜", onOpenFeed, onOpenUser, onOpenTarget)', '1 -> FeedChannel(container, "热门", "/page?url=V9_HOME_TAB_RANKING", "热榜", onOpenFeed, onOpenUser, onOpenTarget, listStates[1], retainedFeeds)')
+          s = s.replace('2 -> CategoryIndexChannel(container, topic = true, onOpenCategory = onOpenCategory)', '2 -> CategoryIndexChannel(container, topic = true, onOpenCategory = onOpenCategory, listState = listStates[2])')
+          s = s.replace('3 -> CategoryIndexChannel(container, topic = false, onOpenCategory = onOpenCategory)', '3 -> CategoryIndexChannel(container, topic = false, onOpenCategory = onOpenCategory, listState = listStates[3])')
+          s = s.replace('4 -> FeedChannel(container, "酷图", "/page?url=V11_FIND_COOLPIC", "酷图", onOpenFeed, onOpenUser, onOpenTarget)', '4 -> FeedChannel(container, "酷图", "/page?url=V11_FIND_COOLPIC", "酷图", onOpenFeed, onOpenUser, onOpenTarget, listStates[4], retainedFeeds)')
+          s = s.replace('5 -> SearchChannel(container, onOpenFeed, onOpenUser, onOpenTarget)', '5 -> SearchChannel(container, onOpenFeed, onOpenUser, onOpenTarget, listStates[5])')
+          s = s.replace('''                    onOpenNotification = onOpenNotification,
+                          )''', '''                    onOpenNotification = onOpenNotification,
+                              listState = listStates[6],
+                          )''', 1)
+          s = s.replace('''                    onAbout = onAbout,
+                          )
+                      }
+                  }''', '''                    onAbout = onAbout,
+                              listState = listStates[7],
+                          )
+                      }
+                  }''', 1)
+          # FeedChannel params and feed retention.
+          s = replace_once(s,
+              '''    onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+          ) {
+              val feed = remember(title, container.accountVersion) {
+                  PagedFeed { page ->
+                      if (url == null) container.repository.homeFeed(page, 1, container.installTime)
+                      else container.repository.dataList(url, dataTitle ?: title, page, hideFolded = true)
+                  }
+              }''',
+              '''    onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+              state: ScalingLazyListState,
+              retainedFeeds: MutableMap<String, PagedFeed>,
+          ) {
+              val feedKey = "$title:${container.accountVersion}"
+              val feed = remember(retainedFeeds, feedKey) {
+                  retainedFeeds.getOrPut(feedKey) {
+                      PagedFeed { page ->
+                          if (url == null) container.repository.homeFeed(page, 1, container.installTime)
+                          else container.repository.dataList(url, dataTitle ?: title, page, hideFolded = true)
+                      }
+                  }
+              }''',
+              'FeedChannel retain feed')
+          s = replace_once(s, '    val state = rememberScalingLazyListState()\n    val cards = remember(feed.items, container.settingsRevision)', '    val cards = remember(feed.items, container.settingsRevision)', 'FeedChannel retain list state')
+          # CategoryIndexChannel state parameter and use parent's scroll state.
+          s = replace_once(s,
+              'private fun CategoryIndexChannel(container: WearContainer, topic: Boolean, onOpenCategory: (Datum) -> Unit) {',
+              'private fun CategoryIndexChannel(container: WearContainer, topic: Boolean, onOpenCategory: (Datum) -> Unit, listState: ScalingLazyListState) {',
+              'CategoryIndex params')
+          start = s.index('private fun CategoryIndexChannel(')
+          end = s.index('\n@Composable\nprivate fun SearchChannel(', start)
+          section = s[start:end]
+          section = replace_once(section, '    val listState = rememberScalingLazyListState()\n    ScreenScaffold(scrollState = listState) { padding ->', '    ScreenScaffold(scrollState = listState) { padding ->', 'CategoryIndex retain list state')
+          s = s[:start] + section + s[end:]
+          # SearchChannel state parameter.
+          s = replace_once(s,
+              '''    onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+          ) {
+              var text by remember { mutableStateOf("") }''',
+              '''    onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+              listState: ScalingLazyListState,
+          ) {
+              var text by remember { mutableStateOf("") }''',
+              'SearchChannel params')
+          start = s.index('private fun SearchChannel(')
+          end = s.index('\n@Composable\nprivate fun SearchResultsSection(', start)
+          section = s[start:end]
+          section = replace_once(section, '    val listState = rememberScalingLazyListState()\n    ScreenScaffold(scrollState = listState) { padding ->', '    ScreenScaffold(scrollState = listState) { padding ->', 'SearchChannel retain list state')
+          s = s[:start] + section + s[end:]
+          p.write_text(s)
+          
+          # 3) Reuse account/settings list offsets too, and provide an explicit way back from a setting subsection.
+          p = PKG / 'MoreScreens.kt'
+          s = p.read_text()
+          s = s.replace('import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState\n', 'import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState\nimport androidx.wear.compose.foundation.lazy.ScalingLazyListState\n')
+          s = replace_once(s,
+              '''    onOpenList: (String, String?) -> Unit,
+              onOpenNotification: (String) -> Unit,
+          ) {
+              val account = container.account''',
+              '''    onOpenList: (String, String?) -> Unit,
+              onOpenNotification: (String) -> Unit,
+              listState: ScalingLazyListState,
+          ) {
+              val account = container.account''',
+              'MeScreen state arg')
+          s = replace_once(s, '    val listState = rememberScalingLazyListState()\n    val name = account?.let', '    val name = account?.let', 'MeScreen remove local state')
+          s = replace_once(s,
+              '''    onOpenSection: (String) -> Unit,
+              onAbout: () -> Unit,
+          ) {
+              val context = LocalContext.current
+              val listState = rememberScalingLazyListState()''',
+              '''    onOpenSection: (String) -> Unit,
+              onAbout: () -> Unit,
+              listState: ScalingLazyListState,
+          ) {
+              val context = LocalContext.current''',
+              'SettingsScreen state arg')
+          s = replace_once(s,
+              'fun SettingsDetailScreen(container: WearContainer, section: String, onOpenList: (String, String?) -> Unit) {',
+              'fun SettingsDetailScreen(container: WearContainer, section: String, onOpenList: (String, String?) -> Unit, onBack: () -> Unit) {',
+              'SettingsDetail callback arg')
+          s = replace_once(s,
+              '''        ScalingLazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = padding, horizontalAlignment = Alignment.CenterHorizontally) {
+                      item { ListHeader { Text(title) } }''',
+              '''        ScalingLazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = padding, horizontalAlignment = Alignment.CenterHorizontally) {
+                      item { MenuButton("← 返回设置", "回到设置主菜单") { onBack() } }
+                      item { ListHeader { Text(title) } }''',
+              'SettingsDetail back row')
+          p.write_text(s)
+          
+          # 4) Add a restrained glass material: a translucent gradient, fine stroke, and a single blurred light bloom on the top rail.
+          p = PKG / 'Components.kt'
+          s = p.read_text()
+          s = s.replace('import androidx.compose.ui.graphics.Color\n', 'import androidx.compose.ui.graphics.Color\nimport androidx.compose.ui.graphics.Brush\n')
+          s = s.replace('import androidx.compose.ui.draw.clip\n', 'import androidx.compose.ui.draw.clip\nimport androidx.compose.ui.draw.blur\n')
+          s = s.replace('import androidx.wear.compose.material3.Card\n', '')
+          # Replace three card calls by GlassCard.
+          s = s.replace('Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {', 'GlassCard(onClick = onClick, modifier = Modifier.fillMaxWidth()) {', 1)
+          s = s.replace('Card(onClick = { onOpenTarget(target) }) {', 'GlassCard(onClick = { onOpenTarget(target) }, modifier = Modifier) {', 1)
+          s = s.replace('Card(onClick = { reply.authorUid?.takeIf { !reply.isAnonymous }?.let(onUser) }, modifier = Modifier.fillMaxWidth()) {', 'GlassCard(onClick = { reply.authorUid?.takeIf { !reply.isAnonymous }?.let(onUser) }, modifier = Modifier.fillMaxWidth()) {', 1)
+          # GlassCard inserts before FeedCard.
+          anchor = '/** A feed in a list: who, what, a picture, and the counts. */'
+          glass = '''/** Lightweight frosted card. Uses a gradient and thin highlight rather than live backdrop blur. */
+          @Composable
+          fun GlassCard(
+              onClick: () -> Unit,
+              modifier: Modifier = Modifier,
+              content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+          ) {
+              val shape = RoundedCornerShape(17.dp)
+              val base = MaterialTheme.colorScheme.surfaceContainerHigh
+              Column(
+                  modifier = modifier
+                      .clip(shape)
+                      .background(Brush.verticalGradient(listOf(
+                          base.copy(alpha = 0.88f),
+                          MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.76f),
+                          MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.84f),
+                      )))
+                      .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.30f), shape)
+                      .clickable(onClick = onClick)
+                      .padding(10.dp),
+                  content = content,
+              )
+          }
+          
+          '''
+          s = replace_once(s, anchor, glass + anchor, 'Insert GlassCard')
+          # Glass navigation pill with subtle gradient / hairline stroke; no per-frame sizing animation.
+          s = replace_once(s,
+              '''fun ChoiceButton(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+              if (selected) {
+                  Button(onClick = onClick, modifier = modifier, label = { Text(text, maxLines = 1) })
+              } else {
+                  FilledTonalButton(onClick = onClick, modifier = modifier, label = { Text(text, maxLines = 1) })
+              }
+          }''',
+              '''fun ChoiceButton(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+              val shape = RoundedCornerShape(50)
+              val background = if (selected) Brand.copy(alpha = 0.24f) else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.58f)
+              val stroke = if (selected) Brand.copy(alpha = 0.62f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.28f)
+              Box(
+                  modifier = modifier.clip(shape)
+                      .background(Brush.verticalGradient(listOf(background.copy(alpha = (background.alpha + 0.10f).coerceAtMost(1f)), background)))
+                      .border(1.dp, stroke, shape)
+                      .clickable(onClick = onClick)
+                      .padding(horizontal = 11.dp, vertical = 7.dp),
+                  contentAlignment = Alignment.Center,
+              ) {
+                  Text(text, maxLines = 1, color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+              }
+          }''',
+              'Glass ChoiceButton')
+          p.write_text(s)
+          
+          # 5) Make home feed prefetch less chatty and avoid a per-chip size animation.
+          p = PKG / 'ChannelScreens.kt'
+          s = p.read_text()
+          s = s.replace('import androidx.compose.animation.animateContentSize\n', '')
+          s = s.replace('modifier = Modifier.animateContentSize().heightIn(min = 36.dp),', 'modifier = Modifier.heightIn(min = 36.dp),')
+          # Add a small blurred highlight behind the top rail's glass tint. Use only one blur layer, not every card.
+          s = replace_once(s,
+              '''            androidx.compose.foundation.layout.Box(
+                          modifier = Modifier.align(Alignment.TopStart).fillMaxWidth(0.72f).heightIn(min = 14.dp)
+                              .background(Brand.copy(alpha = 0.14f), RoundedCornerShape(24.dp))
+                              .then(Modifier),
+                      )''',
+              '''            androidx.compose.foundation.layout.Box(
+                          modifier = Modifier.align(Alignment.TopStart).fillMaxWidth(0.72f).heightIn(min = 14.dp)
+                              .background(Brush.horizontalGradient(listOf(Brand.copy(alpha = 0.20f), Color.White.copy(alpha = 0.04f), Color.Transparent)), RoundedCornerShape(24.dp))
+                              .blur(8.dp),
+                      )''',
+              'Add rail glass highlight')
+          # Imports to support the top rail glass gradient/blur.
+          s = s.replace('import androidx.compose.foundation.background\n', 'import androidx.compose.foundation.background\nimport androidx.compose.ui.graphics.Brush\nimport androidx.compose.ui.draw.blur\n')
+          p.write_text(s)
+          
+          # 6) Update version in about/preferences display.
+          p = PKG / 'MoreScreens.kt'
+          s = p.read_text().replace('const val WEAR_VERSION_NAME = "0.6.5"', 'const val WEAR_VERSION_NAME = "0.6.6"')
+          s = s.replace('"酷安 Wear OS 版 0.6.5"', '"酷安 Wear OS 版 0.6.6"')
+          p.write_text(s)
+          
+          # Bump the Android target to API 37 for Wear OS 7 while retaining API 36 / Wear OS 6 runtime compatibility.
+          build_file = Path('wear/build.gradle.kts')
+          bs = build_file.read_text()
+          for old, new in [
+              ('versionCode = 2026103109', 'versionCode = 2026103110'),
+              ('versionName = "0.6.5"', 'versionName = "0.6.6"'),
+              ('targetSdk = 36', 'targetSdk = 37'),
+          ]:
+              if old not in bs:
+                  raise SystemExit(f'Cannot find expected build setting: {old}')
+              bs = bs.replace(old, new, 1)
+          build_file.write_text(bs)
+          
+          print('0.6.6 back-stack retention, frosted material, API 37 target and Wear performance patches applied')
+          PY
+          python3 /tmp/patch_wear_066.py
+
+      - name: Verify Wear OS 0.6.6 navigation, in-app CAPTCHA and ARMv7 ABI
         shell: bash
         run: |
           set -euo pipefail
@@ -4505,8 +4901,9 @@ jobs:
           test -s wear/build.gradle.kts
           grep -q '":wear"' settings.gradle.kts
           grep -q 'https://maven.mozilla.org/maven2/' settings.gradle.kts
-          grep -q 'versionCode = 2026103109' wear/build.gradle.kts
-          grep -q 'versionName = "0.6.5"' wear/build.gradle.kts
+          grep -q 'versionCode = 2026103110' wear/build.gradle.kts
+          grep -q 'versionName = "0.6.6"' wear/build.gradle.kts
+          grep -q 'targetSdk = 37' wear/build.gradle.kts
           grep -q 'minorApiLevel = 2' wear/build.gradle.kts
           grep -q 'version = release(37)' wear/build.gradle.kts
           grep -q 'abiFilters.add("armeabi-v7a")' wear/build.gradle.kts
@@ -4524,6 +4921,17 @@ jobs:
           grep -q 'horizontalScroll(railState)' "$W/ChannelScreens.kt"
           grep -q '6 -> MeScreen(' "$W/ChannelScreens.kt"
           grep -q 'else -> SettingsScreen(' "$W/ChannelScreens.kt"
+          grep -q 'val channelPagerState = rememberPagerState' "$W/WearApp.kt"
+          grep -q 'val retainedChannelFeeds = remember' "$W/WearApp.kt"
+          grep -q 'listStates = channelListStates' "$W/WearApp.kt"
+          grep -q 'retainedFeeds.getOrPut(feedKey)' "$W/ChannelScreens.kt"
+          grep -q 'pagerState: PagerState' "$W/ChannelScreens.kt"
+          grep -q 'MenuButton("← 返回设置"' "$W/MoreScreens.kt"
+          grep -q 'onBack = { navController.popBackStack() }' "$W/WearApp.kt"
+          grep -q 'fun GlassCard(' "$W/Components.kt"
+          grep -q 'Brush.verticalGradient' "$W/Components.kt"
+          grep -q '\.blur(8.dp)' "$W/ChannelScreens.kt"
+          grep -q 'beyondViewportPageCount = 0' "$W/ChannelScreens.kt"
           grep -q 'android.webkit.WebView' "$W/WearCaptchaBrowser.kt"
           grep -q 'GeckoView' "$W/WearCaptchaBrowser.kt"
           grep -q 'GeckoSession.NavigationDelegate' "$W/WearCaptchaBrowser.kt"
@@ -4531,7 +4939,7 @@ jobs:
           grep -q 'pending.acceptValidate(validate)' "$W/WearCaptchaBrowser.kt"
           grep -q 'fun acceptValidate(validate: String?)' "$W/WearCaptchaCoordinator.kt"
           grep -q 'c001apk-wear://captcha?cid=' "$W/WearCaptchaBrowser.kt"
-          grep -q 'WEAR_VERSION_NAME = "0.6.5"' "$W/MoreScreens.kt"
+          grep -q 'WEAR_VERSION_NAME = "0.6.6"' "$W/MoreScreens.kt"
           grep -q '内置浏览验证' "$W/MoreScreens.kt"
           grep -q 'feedReplies(id, listType, page, fromAuthor)' "$W/DetailScreens.kt"
           grep -q 'subRepliesVerified(origin.id.orEmpty(), page)' "$W/DetailScreens.kt"
@@ -4572,6 +4980,14 @@ jobs:
           assert nav in channel
           assert 'horizontalScroll(railState)' in channel
           assert '6 -> MeScreen(' in channel and 'else -> SettingsScreen(' in channel
+          app = (base / 'kotlin/com/zailinn/c001apk/wear/WearApp.kt').read_text()
+          assert 'val channelPagerState = rememberPagerState' in app
+          assert 'val retainedChannelFeeds = remember' in app
+          assert 'listStates = channelListStates' in app
+          assert 'retainedFeeds.getOrPut(feedKey)' in channel
+          assert 'MenuButton("← 返回设置"' in (base / 'kotlin/com/zailinn/c001apk/wear/MoreScreens.kt').read_text()
+          assert 'fun GlassCard(' in (base / 'kotlin/com/zailinn/c001apk/wear/Components.kt').read_text()
+          assert 'beyondViewportPageCount = 0' in channel
           assert 'onSettings = { scope.launch { pager.animateScrollToPage(7) } }' in channel
           browser = (base / 'kotlin/com/zailinn/c001apk/wear/WearCaptchaBrowser.kt').read_text()
           assert 'WebView(ctx)' in browser and 'GeckoView(ctx)' in browser
@@ -4587,25 +5003,25 @@ jobs:
           assert 'arm64-v8a' not in build
           print(f'Validated 8-entry single navigation rail, on-watch WebView/GeckoView proof callback, manifest and {len(kotlin)} Kotlin files; ABI filter is armeabi-v7a only.')
           PY
-          python3 -m py_compile /tmp/patch_wear_064.py
-          echo 'Wear OS 0.6.5 source and 32-bit ABI checks passed.'
+          python3 -m py_compile /tmp/patch_wear_064.py /tmp/patch_wear_066.py
+          echo 'Wear OS 0.6.6 retained navigation, glass UI, API 37 and 32-bit ABI checks passed.'
 
-      - name: Build Wear OS 0.6.5 32-bit ARMv7 release APK
+      - name: Build Wear OS 0.6.6 32-bit ARMv7 release APK
         run: |
           chmod +x ./gradlew
           ./gradlew :wear:assembleRelease --no-daemon --stacktrace
 
-      - name: Verify APK 0.6.5 output and native ABI
+      - name: Verify APK 0.6.6 output and native ABI
         run: |
           set -euo pipefail
           ls -lh wear/build/outputs/apk/release/
           test -s wear/build/outputs/apk/release/wear-release.apk
           mkdir -p dist
-          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.5-32bit-InternalCaptcha-GalaxyWatch7.apk
-          sha256sum dist/Coolapk-WearOS-v0.6.5-32bit-InternalCaptcha-GalaxyWatch7.apk > dist/SHA256SUMS.txt
+          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.6-32bit-Glass-InternalCaptcha-GalaxyWatch7.apk
+          sha256sum dist/Coolapk-WearOS-v0.6.6-32bit-Glass-InternalCaptcha-GalaxyWatch7.apk > dist/SHA256SUMS.txt
           python3 - <<'PY'
           import zipfile
-          apk = 'dist/Coolapk-WearOS-v0.6.5-32bit-InternalCaptcha-GalaxyWatch7.apk'
+          apk = 'dist/Coolapk-WearOS-v0.6.6-32bit-Glass-InternalCaptcha-GalaxyWatch7.apk'
           with zipfile.ZipFile(apk) as z:
               abis = sorted({n.split('/')[1] for n in z.namelist() if n.startswith('lib/') and len(n.split('/')) > 2})
           print('APK native ABI folders:', abis)
@@ -4617,12 +5033,12 @@ jobs:
               f.write('required=armeabi-v7a\n')
               f.write('64bit_or_x86=none\n')
           PY
-          printf 'versionName=0.6.5\nversionCode=2026103109\ncompileSdk=37.2 (minorApiLevel=2)\nbuildTools=37.0.0\nabi=armeabi-v7a-only\nwebview=system-first\ngeckoview=159.0.20261022150525-armeabi-v7a\n' > dist/BUILD_INFO.txt
+          printf 'versionName=0.6.6\nversionCode=2026103110\ntargetSdk=37\ncompileSdk=37.2 (minorApiLevel=2)\nbuildTools=37.0.0\nabi=armeabi-v7a-only\nwearOs=6-and-7\nminSdk=30\nwebview=system-first\ngeckoview=159.0.20261022150525-armeabi-v7a\n' > dist/BUILD_INFO.txt
           printf 'source=%s\ncommit=%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> dist/BUILD_INFO.txt
 
       - name: Upload Wear APK
         uses: actions/upload-artifact@v7
         with:
-          name: Coolapk-WearOS-v0.6.5-32bit-InternalCaptcha-GalaxyWatch7
+          name: Coolapk-WearOS-v0.6.6-32bit-Glass-GalaxyWatch7
           path: dist/
           if-no-files-found: error
