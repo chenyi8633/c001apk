@@ -1,9 +1,9 @@
-# 酷安 Wear OS 0.6.6 / Galaxy Watch7 32-bit ARMv7 导航记忆、毛玻璃与性能优化版自动编译工作流
+# 酷安 Wear OS 0.6.7 / Galaxy Watch7 32-bit ARMv7 返回修复、轻量毛玻璃与网络恢复优化版自动编译工作流
 # 使用：将本文件放到 .github/workflows/wear-apk.yml 并提交到 main。
 # 从你 Fork 仓库当前提交构建，保留 :core 网络层；手表端单独适配圆屏 UI。
 
-name: Build Coolapk Wear OS v0.6.6 - ARMv7 - Frosted UI - Galaxy Watch7
-run-name: Wear OS 0.6.6 返回位置记忆、轻量毛玻璃、Wear OS 6/7、32 位 ARMv7
+name: Build Coolapk Wear OS v0.6.7 - ARMv7 - Network Recovery - Galaxy Watch7
+run-name: Wear OS 0.6.7 返回位置记忆、轻量毛玻璃、断网恢复、Wear OS 6/7、32 位 ARMv7
 
 on:
   push:
@@ -4493,7 +4493,7 @@ jobs:
           PY
           python3 /tmp/patch_wear_064.py
 
-      - name: Apply Wear OS 0.6.6 back-stack, frosted glass and battery optimizations
+      - name: Apply Wear OS 0.6.7 back-stack, frosted glass and battery optimizations
         shell: bash
         run: |
           set -euo pipefail
@@ -4863,21 +4863,21 @@ jobs:
                       )''',
               'Add rail glass highlight')
           # Imports to support the top rail glass gradient/blur.
-          s = s.replace('import androidx.compose.foundation.background\n', 'import androidx.compose.foundation.background\nimport androidx.compose.ui.graphics.Brush\nimport androidx.compose.ui.draw.blur\n')
+          s = s.replace('import androidx.compose.foundation.background\n', 'import androidx.compose.foundation.background\nimport androidx.compose.ui.graphics.Brush\nimport androidx.compose.ui.draw.blur\nimport androidx.compose.ui.draw.clip\n')
           p.write_text(s)
           
           # 6) Update version in about/preferences display.
           p = PKG / 'MoreScreens.kt'
-          s = p.read_text().replace('const val WEAR_VERSION_NAME = "0.6.5"', 'const val WEAR_VERSION_NAME = "0.6.6"')
-          s = s.replace('"酷安 Wear OS 版 0.6.5"', '"酷安 Wear OS 版 0.6.6"')
+          s = p.read_text().replace('const val WEAR_VERSION_NAME = "0.6.5"', 'const val WEAR_VERSION_NAME = "0.6.7"')
+          s = s.replace('"酷安 Wear OS 版 0.6.5"', '"酷安 Wear OS 版 0.6.7"')
           p.write_text(s)
           
           # Bump the Android target to API 37 for Wear OS 7 while retaining API 36 / Wear OS 6 runtime compatibility.
           build_file = Path('wear/build.gradle.kts')
           bs = build_file.read_text()
           for old, new in [
-              ('versionCode = 2026103109', 'versionCode = 2026103110'),
-              ('versionName = "0.6.5"', 'versionName = "0.6.6"'),
+              ('versionCode = 2026103109', 'versionCode = 2026103112'),
+              ('versionName = "0.6.5"', 'versionName = "0.6.7"'),
               ('targetSdk = 36', 'targetSdk = 37'),
           ]:
               if old not in bs:
@@ -4885,11 +4885,300 @@ jobs:
               bs = bs.replace(old, new, 1)
           build_file.write_text(bs)
           
-          print('0.6.6 back-stack retention, frosted material, API 37 target and Wear performance patches applied')
+          print('0.6.7 back-stack retention, frosted material, API 37 target and Wear performance patches applied')
           PY
           python3 /tmp/patch_wear_066.py
 
-      - name: Verify Wear OS 0.6.6 navigation, in-app CAPTCHA and ARMv7 ABI
+      - name: Apply Wear OS 0.6.7 network recovery and startup safeguards
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/patch_wear_067_network.py <<'PY'
+          from pathlib import Path
+          import re
+          
+          ROOT = Path('wear/src/main')
+          PKG = ROOT / 'kotlin/com/zailinn/c001apk/wear'
+          
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              n = text.count(old)
+              if n != 1:
+                  raise RuntimeError(f'{label}: expected exactly one match, found {n}')
+              return text.replace(old, new, 1)
+          
+          # Fix the exact Kotlin compile error reported by the user's 0.6.6 Actions log.
+          p = PKG / 'ChannelScreens.kt'
+          s = p.read_text()
+          if 'import androidx.compose.ui.draw.clip\n' not in s:
+              s = replace_once(s, 'import androidx.compose.foundation.background\n',
+                  'import androidx.compose.foundation.background\nimport androidx.compose.ui.draw.clip\n',
+                  'ChannelScreens clip import')
+          p.write_text(s)
+          
+          # Make network availability observable without a polling service or wake lock.
+          network_file = PKG / 'WearNetworkMonitor.kt'
+          network_file.write_text('''package com.zailinn.c001apk.wear
+          
+          import android.content.Context
+          import android.net.ConnectivityManager
+          import android.net.Network
+          import android.net.NetworkCapabilities
+          import kotlinx.coroutines.delay
+          import kotlinx.coroutines.flow.MutableStateFlow
+          import kotlinx.coroutines.flow.asStateFlow
+          import kotlinx.coroutines.flow.first
+          import kotlinx.coroutines.withTimeoutOrNull
+          import com.zailinn.c001apk.core.model.LoadResult
+          import com.zailinn.c001apk.core.net.ApiFailureKind
+          
+          /**
+           * Observes the system's default validated internet route. This does not keep Wi-Fi
+           * awake, poll in the background, start a service, or depend on a paired phone.
+           */
+          class WearNetworkMonitor(context: Context) {
+              private val manager = context.applicationContext
+                  .getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+          
+              private val _validatedInternet = MutableStateFlow(readValidatedInternet())
+              val validatedInternet = _validatedInternet.asStateFlow()
+          
+              private val callback = object : ConnectivityManager.NetworkCallback() {
+                  override fun onAvailable(network: Network) { refresh() }
+                  override fun onLost(network: Network) { refresh() }
+                  override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) { refresh() }
+              }
+          
+              init {
+                  // Register once for the app process. A failed registration must not block app startup.
+                  runCatching { manager.registerDefaultNetworkCallback(callback) }
+                  refresh()
+              }
+          
+              private fun readValidatedInternet(): Boolean {
+                  val active = runCatching { manager.activeNetwork }.getOrNull() ?: return false
+                  val caps = runCatching { manager.getNetworkCapabilities(active) }.getOrNull() ?: return false
+                  return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                      caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+              }
+          
+              fun refresh(): Boolean {
+                  val available = readValidatedInternet()
+                  _validatedInternet.value = available
+                  return available
+              }
+          
+              /** Wait for an actual validated route, not merely a connected Wi-Fi radio. */
+              suspend fun awaitValidatedInternet(timeoutMs: Long = 10_000L): Boolean {
+                  if (!refresh()) {
+                      val arrived = withTimeoutOrNull(timeoutMs) {
+                          validatedInternet.first { it }
+                      } ?: false
+                      if (!arrived) return false
+                  }
+                  // Allow the newly selected default route and DNS to settle before one retry.
+                  delay(550L)
+                  return refresh()
+              }
+          
+              /** Retry a one-shot screen request once after a transient transport failure. */
+              suspend fun <T> withRecovery(request: suspend () -> LoadResult<T>): LoadResult<T> {
+                  val first = request()
+                  if (first !is LoadResult.Error || first.kind != ApiFailureKind.Transport) return first
+                  if (!awaitValidatedInternet()) {
+                      return LoadResult.Error(OFFLINE_MESSAGE, ApiFailureKind.Transport)
+                  }
+                  return request()
+              }
+          
+              companion object {
+                  const val OFFLINE_MESSAGE = "手表暂时没有可用的互联网连接。请检查设置中的 Wi‑Fi/LTE，或等待网络恢复后点「重试」。"
+              }
+          }
+          ''')
+          
+          # Register the monitor and provide a single factory for all watch paged lists.
+          p = PKG / 'WearContainer.kt'
+          s = p.read_text()
+          if 'import java.util.concurrent.TimeUnit\n' not in s:
+              s = replace_once(s, 'import okhttp3.OkHttpClient\n',
+                  'import okhttp3.OkHttpClient\nimport java.util.concurrent.TimeUnit\n',
+                  'WearContainer OkHttp import')
+          s = replace_once(s, '    private val prefs = context.getSharedPreferences("wear", Context.MODE_PRIVATE)\n',
+              '    private val prefs = context.getSharedPreferences("wear", Context.MODE_PRIVATE)\n    val networkMonitor = WearNetworkMonitor(appContext)\n',
+              'WearContainer network monitor')
+          s = replace_once(s, '    private val baseHttp = OkHttpClient()\n',
+          '''    // Bounded requests and connection recovery: no unending launch-time network wait.
+              private val baseHttp = OkHttpClient.Builder()
+                  .connectTimeout(10, TimeUnit.SECONDS)
+                  .readTimeout(15, TimeUnit.SECONDS)
+                  .callTimeout(30, TimeUnit.SECONDS)
+                  .retryOnConnectionFailure(true)
+                  .build()
+          ''', 'WearContainer bounded OkHttp client')
+          s = replace_once(s, '    val repository = CoolapkRepository(client)\n',
+          '''    val repository = CoolapkRepository(client)
+          
+              fun newPagedFeed(
+                  load: suspend (com.zailinn.c001apk.core.net.Page) -> com.zailinn.c001apk.core.model.LoadResult<List<Datum>>,
+              ): PagedFeed = PagedFeed(load = load, awaitNetwork = { networkMonitor.awaitValidatedInternet() })
+          ''', 'WearContainer paged feed factory')
+          p.write_text(s)
+          
+          # Recover feed loading exactly once when a network route returns; avoid repeated polling.
+          p = PKG / 'PagedFeed.kt'
+          s = p.read_text()
+          if 'import com.zailinn.c001apk.core.net.ApiFailureKind\n' not in s:
+              s = replace_once(s, 'import com.zailinn.c001apk.core.net.Page\n',
+                  'import com.zailinn.c001apk.core.net.Page\nimport com.zailinn.c001apk.core.net.ApiFailureKind\nimport kotlinx.coroutines.delay\n',
+                  'PagedFeed imports')
+          s = replace_once(s,
+              'class PagedFeed(private val load: suspend (Page) -> LoadResult<List<Datum>>) {',
+              'class PagedFeed(\n    private val load: suspend (Page) -> LoadResult<List<Datum>>,\n    private val awaitNetwork: suspend () -> Boolean = { false },\n) {',
+              'PagedFeed constructor')
+          s = replace_once(s,
+              '    var error by mutableStateOf<String?>(null)\n        private set\n',
+              '    var error by mutableStateOf<String?>(null)\n        private set\n    var errorKind by mutableStateOf<ApiFailureKind?>(null)\n        private set\n',
+              'PagedFeed error kind')
+          s = s.replace('        error = null\n        ended = false\n', '        error = null\n        errorKind = null\n        ended = false\n', 1)
+          s = replace_once(s,
+          '''        try {
+                      val result = load(Page(page, first, last))
+                      if (mine != epoch) return
+                      when (result) {
+          ''',
+          '''        try {
+                      val requestPage = Page(page, first, last)
+                      var result = load(requestPage)
+                      if (result is LoadResult.Error && result.kind == ApiFailureKind.Transport) {
+                          val networkReturned = awaitNetwork()
+                          if (networkReturned && mine == epoch) {
+                              // Exactly one retry after Android reports a validated default route.
+                              result = load(requestPage)
+                          } else if (!networkReturned) {
+                              result = LoadResult.Error(WearNetworkMonitor.OFFLINE_MESSAGE, ApiFailureKind.Transport)
+                          }
+                      }
+                      if (mine != epoch) return
+                      when (result) {
+          ''',
+              'PagedFeed one-shot network recovery')
+          s = replace_once(s,
+          '''                is LoadResult.Error -> error = result.message
+          ''',
+          '''                is LoadResult.Error -> {
+                              error = result.message
+                              errorKind = result.kind
+                          }
+          ''',
+              'PagedFeed error propagation')
+          s = replace_once(s,
+          '''        } catch (e: Exception) {
+                      if (mine == epoch) error = e.message ?: "加载失败"
+          ''',
+          '''        } catch (e: Exception) {
+                      if (mine == epoch) {
+                          error = e.message ?: "加载失败"
+                          errorKind = ApiFailureKind.Transport
+                      }
+          ''',
+              'PagedFeed exception kind')
+          s = replace_once(s,
+          '''        loading = true
+                  error = null
+                  val mine = epoch
+          ''',
+          '''        loading = true
+                  error = null
+                  errorKind = null
+                  val mine = epoch
+          ''',
+              'PagedFeed clear error kind when loading')
+          p.write_text(s)
+          
+          # All feeds are created through the shared WearContainer factory.
+          for name in ['WearApp.kt', 'ChannelScreens.kt', 'MoreScreens.kt', 'TargetScreen.kt', 'DetailScreens.kt']:
+              p = PKG / name
+              s = p.read_text()
+              s2 = s.replace('PagedFeed {', 'container.newPagedFeed {')
+              if s2 == s and name in ['WearApp.kt', 'ChannelScreens.kt', 'MoreScreens.kt', 'TargetScreen.kt', 'DetailScreens.kt']:
+                  # Some files are expected to contain the helper calls; fail if they unexpectedly do not.
+                  pass
+              p.write_text(s2)
+          
+          # Also use the same bounded recovery path for the one-shot topic/category/search requests.
+          p = PKG / 'ChannelScreens.kt'
+          s = p.read_text()
+          s = replace_once(s,
+          '''        state = if (topic) {
+                      when (val result = container.repository.dataListFromUrl("/v6/page/dataList", listOf("url" to "V11_VERTICAL_TOPIC", "title" to "话题", "page" to "1"))) {
+          ''',
+          '''        state = container.networkMonitor.withRecovery {
+                      if (topic) {
+                          when (val result = container.repository.dataListFromUrl("/v6/page/dataList", listOf("url" to "V11_VERTICAL_TOPIC", "title" to "话题", "page" to "1"))) {
+          ''',
+              'CategoryIndex network recovery start')
+          s = replace_once(s,
+          '''            container.repository.dataListFromUrl("/v6/product/categoryList")
+                  }
+              }
+              val list = (state as? LoadResult.Success)?.value.orEmpty()
+          ''',
+          '''                container.repository.dataListFromUrl("/v6/product/categoryList")
+                      }
+                  }
+              }
+              val list = (state as? LoadResult.Success)?.value.orEmpty()
+          ''',
+              'CategoryIndex network recovery end')
+          # One-shot search channel uses a typed result and keeps its existing retry button.
+          s = s.replace(
+          '''            when (val result = container.repository.search(type, "all", "default", keyword, 0, null, null, Page())) {
+          ''',
+          '''            when (val result = container.networkMonitor.withRecovery { container.repository.search(type, "all", "default", keyword, 0, null, null, Page()) }) {
+          ''', 1)
+          p.write_text(s)
+          
+          # Topic/product detail pages also benefit from the same recovery path.
+          p = PKG / 'TargetScreen.kt'
+          s = p.read_text()
+          s = replace_once(s,
+          '''        when (val result = container.repository.topicDetail(target.tag, target.id)) {
+          ''',
+          '''        when (val result = container.networkMonitor.withRecovery { container.repository.topicDetail(target.tag, target.id) }) {
+          ''',
+              'Target detail network recovery')
+          p.write_text(s)
+          
+          # Watch OS network capability check permission; INTERNET permission was already present.
+          manifest = ROOT / 'AndroidManifest.xml'
+          ms = manifest.read_text()
+          if 'android.permission.ACCESS_NETWORK_STATE' not in ms:
+              ms = replace_once(ms, '    <uses-permission android:name="android.permission.INTERNET" />\n',
+                  '    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n',
+                  'Manifest network permission')
+          manifest.write_text(ms)
+          
+          # Keep the user-visible build version in sync with the workflow.
+          p = PKG / 'MoreScreens.kt'
+          s = p.read_text().replace('const val WEAR_VERSION_NAME = "0.6.6"', 'const val WEAR_VERSION_NAME = "0.6.7"')
+          s = s.replace('"酷安 Wear OS 版 0.6.6"', '"酷安 Wear OS 版 0.6.7"')
+          if 'import androidx.compose.runtime.collectAsState\n' not in s:
+              s = replace_once(s, 'import androidx.compose.runtime.Composable\n', 'import androidx.compose.runtime.Composable\nimport androidx.compose.runtime.collectAsState\n', 'MoreScreens network state import')
+          s = replace_once(s, 'fun SettingsScreen(\n    container: WearContainer,\n    onLogin: () -> Unit,\n    onOpenSection: (String) -> Unit,\n    onAbout: () -> Unit,\n    listState: ScalingLazyListState,\n) {\n    val context = LocalContext.current\n    val account = container.account\n', 'fun SettingsScreen(\n    container: WearContainer,\n    onLogin: () -> Unit,\n    onOpenSection: (String) -> Unit,\n    onAbout: () -> Unit,\n    listState: ScalingLazyListState,\n) {\n    val context = LocalContext.current\n    val account = container.account\n    val networkAvailable by container.networkMonitor.validatedInternet.collectAsState()\n', 'Settings network state')
+          s = replace_once(s, '            item { ListHeader { Text("设置") } }\n', '            item { ListHeader { Text("设置") } }\n            item { MenuButton("网络连接：${if (networkAvailable) \"正常\" else \"暂不可用\"}", if (networkAvailable) \"系统已验证互联网连接\" else \"检查手表 Wi‑Fi/LTE 或蓝牙网络\") {\n                val online = container.networkMonitor.refresh()\n                message = if (online) \"当前系统网络可用\" else \"系统尚未检测到可用互联网，请检查手表连接设置\"\n            } }\n', 'Settings network diagnostic menu')
+          p.write_text(s)
+          
+          # Guardrails: no long-lived service, polling loop, or wake lock was introduced.
+          new_network_code = network_file.read_text()
+          for forbidden in ['PARTIAL_WAKE_LOCK', 'startForegroundService', 'WorkManager', 'while (true)']:
+              if forbidden in new_network_code:
+                  raise SystemExit(f'Unexpected background/power construct introduced in network monitor: {forbidden}')
+          
+          print('0.6.7 network resilience patch applied')
+          PY
+          python3 /tmp/patch_wear_067_network.py
+
+      - name: Verify Wear OS 0.6.7 navigation, network recovery, in-app CAPTCHA and ARMv7 ABI
         shell: bash
         run: |
           set -euo pipefail
@@ -4901,14 +5190,28 @@ jobs:
           test -s wear/build.gradle.kts
           grep -q '":wear"' settings.gradle.kts
           grep -q 'https://maven.mozilla.org/maven2/' settings.gradle.kts
-          grep -q 'versionCode = 2026103110' wear/build.gradle.kts
-          grep -q 'versionName = "0.6.6"' wear/build.gradle.kts
+          grep -q 'versionCode = 2026103112' wear/build.gradle.kts
+          grep -q 'versionName = "0.6.7"' wear/build.gradle.kts
           grep -q 'targetSdk = 37' wear/build.gradle.kts
           grep -q 'minorApiLevel = 2' wear/build.gradle.kts
           grep -q 'version = release(37)' wear/build.gradle.kts
           grep -q 'abiFilters.add("armeabi-v7a")' wear/build.gradle.kts
           grep -q 'geckoview-armeabi-v7a:159.0.20261022150525' wear/build.gradle.kts
           test -s "$W/WearCaptchaCoordinator.kt"
+          test -s "$W/WearNetworkMonitor.kt"
+          grep -q 'android.permission.ACCESS_NETWORK_STATE' wear/src/main/AndroidManifest.xml
+          grep -q 'registerDefaultNetworkCallback' "$W/WearNetworkMonitor.kt"
+          grep -q 'NET_CAPABILITY_VALIDATED' "$W/WearNetworkMonitor.kt"
+          grep -q 'withTimeoutOrNull' "$W/WearNetworkMonitor.kt"
+          grep -q 'callTimeout(30, TimeUnit.SECONDS)' "$W/WearContainer.kt"
+          grep -q 'retryOnConnectionFailure(true)' "$W/WearContainer.kt"
+          grep -q 'awaitNetwork()' "$W/PagedFeed.kt"
+          grep -q 'OFFLINE_MESSAGE' "$W/PagedFeed.kt"
+          grep -q '^import androidx.compose.ui.draw.clip$' "$W/ChannelScreens.kt"
+          test "$(grep -Roh 'container.newPagedFeed' "$W" | wc -l)" -ge 8
+          if grep -nE 'PARTIAL_WAKE_LOCK|startForegroundService|WorkManager|while \(true\)' "$W/WearNetworkMonitor.kt"; then
+            echo 'Network monitor must not add a polling loop or background service.' >&2; exit 1
+          fi
           test -s "$W/WearCaptchaBrowser.kt"
           test -s wear/src/main/res/xml/captcha_file_paths.xml
           test -s "$W/MainActivity.kt"
@@ -4931,6 +5234,7 @@ jobs:
           grep -q 'fun GlassCard(' "$W/Components.kt"
           grep -q 'Brush.verticalGradient' "$W/Components.kt"
           grep -q '\.blur(8.dp)' "$W/ChannelScreens.kt"
+          grep -q '^import androidx.compose.ui.draw.clip$' "$W/ChannelScreens.kt"
           grep -q 'beyondViewportPageCount = 0' "$W/ChannelScreens.kt"
           grep -q 'android.webkit.WebView' "$W/WearCaptchaBrowser.kt"
           grep -q 'GeckoView' "$W/WearCaptchaBrowser.kt"
@@ -4939,7 +5243,7 @@ jobs:
           grep -q 'pending.acceptValidate(validate)' "$W/WearCaptchaBrowser.kt"
           grep -q 'fun acceptValidate(validate: String?)' "$W/WearCaptchaCoordinator.kt"
           grep -q 'c001apk-wear://captcha?cid=' "$W/WearCaptchaBrowser.kt"
-          grep -q 'WEAR_VERSION_NAME = "0.6.6"' "$W/MoreScreens.kt"
+          grep -q 'WEAR_VERSION_NAME = "0.6.7"' "$W/MoreScreens.kt"
           grep -q '内置浏览验证' "$W/MoreScreens.kt"
           grep -q 'feedReplies(id, listType, page, fromAuthor)' "$W/DetailScreens.kt"
           grep -q 'subRepliesVerified(origin.id.orEmpty(), page)' "$W/DetailScreens.kt"
@@ -4989,6 +5293,22 @@ jobs:
           assert 'fun GlassCard(' in (base / 'kotlin/com/zailinn/c001apk/wear/Components.kt').read_text()
           assert 'beyondViewportPageCount = 0' in channel
           assert 'onSettings = { scope.launch { pager.animateScrollToPage(7) } }' in channel
+          monitor = (base / 'kotlin/com/zailinn/c001apk/wear/WearNetworkMonitor.kt').read_text()
+          container = (base / 'kotlin/com/zailinn/c001apk/wear/WearContainer.kt').read_text()
+          paged = (base / 'kotlin/com/zailinn/c001apk/wear/PagedFeed.kt').read_text()
+          assert 'registerDefaultNetworkCallback' in monitor and 'NET_CAPABILITY_VALIDATED' in monitor
+          assert 'withTimeoutOrNull' in monitor and 'OFFLINE_MESSAGE' in monitor
+          assert 'callTimeout(30, TimeUnit.SECONDS)' in container and 'retryOnConnectionFailure(true)' in container
+          assert 'awaitNetwork()' in paged and 'result = load(requestPage)' in paged
+          assert 'android.permission.ACCESS_NETWORK_STATE' in (base / 'AndroidManifest.xml').read_text()
+          assert channel.count('import androidx.compose.ui.draw.clip') == 1
+          assert 'withRecovery' in channel and 'withRecovery' in (base / 'kotlin/com/zailinn/c001apk/wear/TargetScreen.kt').read_text()
+          app = (base / 'kotlin/com/zailinn/c001apk/wear/WearApp.kt').read_text()
+          more = (base / 'kotlin/com/zailinn/c001apk/wear/MoreScreens.kt').read_text()
+          assert app.count('container.newPagedFeed') >= 2
+          assert more.count('container.newPagedFeed') >= 1
+          assert 'networkAvailable by container.networkMonitor.validatedInternet.collectAsState()' in more
+          assert '网络连接：${if (networkAvailable)' in more
           browser = (base / 'kotlin/com/zailinn/c001apk/wear/WearCaptchaBrowser.kt').read_text()
           assert 'WebView(ctx)' in browser and 'GeckoView(ctx)' in browser
           assert 'captchaId:' in browser and 'data.validate' in browser and 'c001apk-wear://captcha?cid=' in browser
@@ -5003,25 +5323,33 @@ jobs:
           assert 'arm64-v8a' not in build
           print(f'Validated 8-entry single navigation rail, on-watch WebView/GeckoView proof callback, manifest and {len(kotlin)} Kotlin files; ABI filter is armeabi-v7a only.')
           PY
-          python3 -m py_compile /tmp/patch_wear_064.py /tmp/patch_wear_066.py
-          echo 'Wear OS 0.6.6 retained navigation, glass UI, API 37 and 32-bit ABI checks passed.'
+          python3 -m py_compile /tmp/patch_wear_064.py /tmp/patch_wear_066.py /tmp/patch_wear_067_network.py
+          echo 'Wear OS 0.6.7 retained navigation, glass UI, validated-network recovery, bounded timeouts, API 37 and ARMv7-only checks passed.'
 
-      - name: Build Wear OS 0.6.6 32-bit ARMv7 release APK
+      - name: Kotlin compile preflight - Wear OS 0.6.7
+        shell: bash
         run: |
+          set -euo pipefail
           chmod +x ./gradlew
-          ./gradlew :wear:assembleRelease --no-daemon --stacktrace
+          ./gradlew :wear:compileReleaseKotlin --no-daemon --stacktrace --console=plain
 
-      - name: Verify APK 0.6.6 output and native ABI
+      - name: Build Wear OS 0.6.7 32-bit ARMv7 release APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew :wear:assembleRelease --no-daemon --stacktrace --console=plain
+
+      - name: Verify APK 0.6.7 output and native ABI
         run: |
           set -euo pipefail
           ls -lh wear/build/outputs/apk/release/
           test -s wear/build/outputs/apk/release/wear-release.apk
           mkdir -p dist
-          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.6-32bit-Glass-InternalCaptcha-GalaxyWatch7.apk
-          sha256sum dist/Coolapk-WearOS-v0.6.6-32bit-Glass-InternalCaptcha-GalaxyWatch7.apk > dist/SHA256SUMS.txt
+          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.7-32bit-NetworkRecovery-Glass-GalaxyWatch7.apk
+          sha256sum dist/Coolapk-WearOS-v0.6.7-32bit-NetworkRecovery-Glass-GalaxyWatch7.apk > dist/SHA256SUMS.txt
           python3 - <<'PY'
           import zipfile
-          apk = 'dist/Coolapk-WearOS-v0.6.6-32bit-Glass-InternalCaptcha-GalaxyWatch7.apk'
+          apk = 'dist/Coolapk-WearOS-v0.6.7-32bit-NetworkRecovery-Glass-GalaxyWatch7.apk'
           with zipfile.ZipFile(apk) as z:
               abis = sorted({n.split('/')[1] for n in z.namelist() if n.startswith('lib/') and len(n.split('/')) > 2})
           print('APK native ABI folders:', abis)
@@ -5033,12 +5361,12 @@ jobs:
               f.write('required=armeabi-v7a\n')
               f.write('64bit_or_x86=none\n')
           PY
-          printf 'versionName=0.6.6\nversionCode=2026103110\ntargetSdk=37\ncompileSdk=37.2 (minorApiLevel=2)\nbuildTools=37.0.0\nabi=armeabi-v7a-only\nwearOs=6-and-7\nminSdk=30\nwebview=system-first\ngeckoview=159.0.20261022150525-armeabi-v7a\n' > dist/BUILD_INFO.txt
+          printf 'versionName=0.6.7\nversionCode=2026103112\ntargetSdk=37\ncompileSdk=37.2 (minorApiLevel=2)\nbuildTools=37.0.0\nabi=armeabi-v7a-only\nwearOs=6-and-7\nminSdk=30\nnetworkRecovery=validated-route-callback+single-retry\nrequestTimeout=30s\nwebview=system-first\ngeckoview=159.0.20261022150525-armeabi-v7a\n' > dist/BUILD_INFO.txt
           printf 'source=%s\ncommit=%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> dist/BUILD_INFO.txt
 
       - name: Upload Wear APK
         uses: actions/upload-artifact@v7
         with:
-          name: Coolapk-WearOS-v0.6.6-32bit-Glass-GalaxyWatch7
+          name: Coolapk-WearOS-v0.6.7-32bit-NetworkRecovery-GalaxyWatch7
           path: dist/
           if-no-files-found: error
