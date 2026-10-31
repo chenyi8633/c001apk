@@ -1,4 +1,8 @@
-name: Build Wear APK
+# 酷安 Wear OS 6 / Galaxy Watch7 最终版自动编译工作流
+# 使用：上传到 .github/workflows/wear-apk.yml 后提交到 main。
+# 基于你最新上传的原版源码构建，保留 :core 网络层；手表端单独适配圆屏 UI。
+
+name: Build Coolapk Wear OS APK
 
 on:
   push:
@@ -8,45 +12,2399 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
-      - name: Checkout
+      - name: Checkout latest source
         uses: actions/checkout@v4
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-37 build-tools;37.0.0'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Unpack Wear module
+      - name: Add Wear OS module
+        shell: bash
         run: |
-          if [ ! -f wear-src.zip ]; then
-            echo "wear-src.zip not found in the repository root"
-            exit 1
-          fi
+          set -euo pipefail
           rm -rf wear
-          unzip -q wear-src.zip
-          sed -i 's/include(":core", ":app")/include(":core", ":app", ":wear")/' settings.gradle.kts
-          grep -n include settings.gradle.kts
+          mkdir -p wear
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('settings.gradle.kts')
+          s = p.read_text()
+          if 'include(":wear")' not in s:
+              s = s.replace('include(":core", ":app")', 'include(":core", ":app", ":wear")')
+              if 'include(":wear")' not in s:
+                  s = s.replace('include(":core", ":app", ":wear")', 'include(":core", ":app", ":wear")')
+          p.write_text(s)
+          PY
+          cat > wear/build.gradle.kts <<'WEAR_EOF'
+          plugins {
+              alias(libs.plugins.android.application)
+              alias(libs.plugins.kotlin.compose)
+          }
+          
+          android {
+              namespace = "com.zailinn.c001apk.wear"
+              compileSdk = 37
+          
+              defaultConfig {
+                  applicationId = "com.zailinn.c001apk.wear"
+                  minSdk = 30
+                  targetSdk = 36
+                  versionCode = 5
+                  versionName = "0.4.1"
+              }
+          
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+          
+              buildTypes {
+                  // Release build for direct sideloading. Keep R8 off here because the
+                  // original Coolapk data model is intentionally dynamic JSON.
+                  release {
+                      isMinifyEnabled = false
+                      isShrinkResources = false
+                      signingConfig = signingConfigs.getByName("debug")
+                  }
+              }
+          
+              buildFeatures {
+                  compose = true
+              }
+          
+              packaging {
+                  resources.excludes += setOf("META-INF/{AL2.0,LGPL2.1}", "META-INF/versions/9/OSGI-INF/MANIFEST.MF")
+              }
+          }
+          
+          kotlin {
+              compilerOptions {
+                  jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+                  optIn.addAll(
+                      "androidx.wear.compose.material3.ExperimentalWearMaterial3Api",
+                      "androidx.wear.compose.foundation.ExperimentalWearFoundationApi",
+                      "androidx.compose.foundation.ExperimentalFoundationApi",
+                      "androidx.compose.foundation.layout.ExperimentalLayoutApi",
+                  )
+              }
+          }
+          
+          dependencies {
+              implementation(project(":core"))
+              implementation(libs.kotlinx.coroutines.android)
+          
+              implementation(platform(libs.androidx.compose.bom))
+              implementation(libs.androidx.compose.ui)
+              implementation(libs.androidx.compose.foundation)
+              implementation("androidx.compose.animation:animation")
+              implementation(libs.androidx.activity.compose)
+              implementation(libs.androidx.core.ktx)
+              implementation(libs.coil.compose)
+              implementation(libs.coil.network.okhttp)
+          
+              implementation("androidx.wear.compose:compose-material3:1.5.0")
+              implementation("androidx.wear.compose:compose-foundation:1.5.0")
+              implementation("androidx.wear.compose:compose-navigation:1.5.0")
+              implementation("androidx.navigation:navigation-runtime:2.9.0")
+          }
+          WEAR_EOF
+          cat > wear/proguard-rules.pro <<'WEAR_EOF'
+          # kotlinx.serialization: keep generated serializers of app and core models.
+          -keepattributes *Annotation*, InnerClasses
+          -keepclassmembers class com.zailinn.c001apk.** {
+              *** Companion;
+          }
+          -keepclasseswithmembers class com.zailinn.c001apk.** {
+              kotlinx.serialization.KSerializer serializer(...);
+          }
+          -dontwarn org.conscrypt.**
+          -dontwarn org.bouncycastle.**
+          -dontwarn org.openjsse.**
+          WEAR_EOF
+          cat > wear/src/main/AndroidManifest.xml <<'WEAR_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+          
+              <uses-feature android:name="android.hardware.type.watch" />
+              <uses-permission android:name="android.permission.INTERNET" />
+          
+              <application
+                  android:name=".WearApplication"
+                  android:allowBackup="false"
+                  android:icon="@drawable/ic_launcher"
+                  android:label="酷安"
+                  android:networkSecurityConfig="@xml/network_security_config"
+                  android:supportsRtl="true"
+                  android:theme="@android:style/Theme.DeviceDefault">
+          
+                  <meta-data
+                      android:name="com.google.android.wearable.standalone"
+                      android:value="true" />
+          
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:taskAffinity=""
+                      android:windowSoftInputMode="adjustResize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          WEAR_EOF
+          cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/AccountScreens.kt <<'WEAR_EOF'
+          package com.zailinn.c001apk.wear
+          
+          import androidx.compose.foundation.clickable
+          import androidx.compose.foundation.background
+          import androidx.compose.foundation.layout.Column
+          import androidx.compose.foundation.layout.padding
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.platform.LocalContext
+          import androidx.compose.foundation.layout.fillMaxSize
+          import androidx.compose.foundation.layout.fillMaxWidth
+          import androidx.compose.foundation.layout.size
+          import androidx.compose.runtime.Composable
+          import androidx.compose.runtime.LaunchedEffect
+          import androidx.compose.runtime.getValue
+          import androidx.compose.runtime.mutableIntStateOf
+          import androidx.compose.runtime.mutableStateOf
+          import androidx.compose.runtime.remember
+          import androidx.compose.runtime.rememberCoroutineScope
+          import androidx.compose.runtime.setValue
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.layout.ContentScale
+          import androidx.compose.ui.text.style.TextAlign
+          import androidx.compose.ui.unit.dp
+          import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+          import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+          import androidx.wear.compose.material3.Button
+          import androidx.wear.compose.material3.FilledTonalButton
+          import androidx.wear.compose.material3.EdgeButton
+          import androidx.wear.compose.material3.ListHeader
+          import androidx.wear.compose.material3.MaterialTheme
+          import androidx.wear.compose.material3.ScreenScaffold
+          import androidx.wear.compose.material3.Text
+          import coil3.compose.AsyncImage
+          import com.zailinn.c001apk.core.model.Datum
+          import com.zailinn.c001apk.core.model.LoadResult
+          import kotlinx.coroutines.launch
+          import java.net.URLDecoder
+          
+          @Composable
+          fun MeScreen(container: WearContainer, onLogin: () -> Unit, onProfile: (String) -> Unit, onAbout: () -> Unit) {
+              val account = container.account
+              var info by remember(account?.uid) { mutableStateOf<Datum?>(null) }
+              LaunchedEffect(account?.uid) {
+                  val uid = account?.uid ?: return@LaunchedEffect
+                  val result = container.repository.userSpace(uid)
+                  if (result is LoadResult.Success) info = result.value
+              }
+              val listState = rememberScalingLazyListState()
+              val name = account?.let { runCatching { URLDecoder.decode(it.username, "UTF-8") }.getOrDefault(it.username) }
+          
+              ScreenScaffold(scrollState = listState) { padding ->
+                  ScalingLazyColumn(
+                      modifier = Modifier.fillMaxSize(),
+                      state = listState,
+                      contentPadding = padding,
+                      horizontalAlignment = Alignment.CenterHorizontally,
+                  ) {
+                      item { ListHeader { Text("我的") } }
+                      if (account == null) {
+                          item { LetterBadge("游", 48.dp) }
+                          item {
+                              Text(
+                                  "游客模式",
+                                  style = MaterialTheme.typography.titleSmall,
+                                  textAlign = TextAlign.Center,
+                              )
+                          }
+                          item {
+                              Text(
+                                  "可以浏览、搜索和看图。登录后可以点赞、关注。",
+                                  style = MaterialTheme.typography.bodySmall,
+                                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                  textAlign = TextAlign.Center,
+                              )
+                          }
+                          item {
+                              Button(
+                                  onClick = onLogin,
+                                  modifier = Modifier.fillMaxWidth(),
+                                  label = { Text("Cookie 登录") },
+                              )
+                          }
+                      } else {
+                          item { Avatar(info?.userAvatar, 56.dp) }
+                          item {
+                              Text(
+                                  name.orEmpty(),
+                                  style = MaterialTheme.typography.titleMedium,
+                                  color = Brand,
+                                  textAlign = TextAlign.Center,
+                                  maxLines = 2,
+                              )
+                          }
+                          item {
+                              Text(
+                                  "UID ${account.uid}",
+                                  style = MaterialTheme.typography.labelSmall,
+                                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                              )
+                          }
+                          item {
+                              Button(
+                                  onClick = { onProfile(account.uid) },
+                                  modifier = Modifier.fillMaxWidth(),
+                                  label = { Text("我的主页") },
+                              )
+                          }
+                          item {
+                              FilledTonalButton(
+                                  onClick = { container.logout() },
+                                  modifier = Modifier.fillMaxWidth(),
+                                  label = { Text("退出登录") },
+                              )
+                          }
+                      }
+                      item {
+                          FilledTonalButton(
+                              onClick = onAbout,
+                              modifier = Modifier.fillMaxWidth(),
+                              label = { Text("关于") },
+                          )
+                      }
+                  }
+              }
+          }
+          
+          @Composable
+          fun LoginScreen(container: WearContainer, onDone: () -> Unit) {
+              var text by remember { mutableStateOf("") }
+              var busy by remember { mutableStateOf(false) }
+              var message by remember { mutableStateOf<String?>(null) }
+              val scope = rememberCoroutineScope()
+              val listState = rememberScalingLazyListState()
+          
+              fun submit() {
+                  if (busy || text.isBlank()) return
+                  busy = true
+                  message = null
+                  scope.launch {
+                      val error = container.loginWithCookie(text)
+                      busy = false
+                      if (error == null) onDone() else message = error
+                  }
+              }
+          
+              ScreenScaffold(
+                  scrollState = listState,
+                  edgeButton = {
+                      EdgeButton(onClick = ::submit, enabled = text.isNotBlank() && !busy) {
+                          Text(if (busy) "验证中…" else "登录")
+                      }
+                  },
+              ) { padding ->
+                  ScalingLazyColumn(
+                      modifier = Modifier.fillMaxSize(),
+                      state = listState,
+                      contentPadding = padding,
+                  ) {
+                      item { ListHeader { Text("Cookie 登录") } }
+                      item {
+                          Text(
+                              "粘贴含 uid、username、token 的 Cookie。Cookie 等同于账号密码，请勿使用他人提供的。",
+                              style = MaterialTheme.typography.bodySmall,
+                              color = MaterialTheme.colorScheme.onSurfaceVariant,
+                              textAlign = TextAlign.Center,
+                          )
+                      }
+                      item {
+                          WatchTextField(
+                              value = text,
+                              onValueChange = { text = it },
+                              hint = "点这里输入或粘贴",
+                              singleLine = false,
+                          )
+                      }
+                      message?.let { error ->
+                          item {
+                              Text(
+                                  error,
+                                  style = MaterialTheme.typography.labelSmall,
+                                  color = MaterialTheme.colorScheme.error,
+                                  textAlign = TextAlign.Center,
+                              )
+                          }
+                      }
+                  }
+              }
+          }
+          
+          /** Full-screen picture. Tap the image to move to the next one; the bottom action saves it. */
+          @Composable
+          fun ImageViewerScreen(urls: List<String>, startIndex: Int, container: WearContainer) {
+              var index by remember { mutableIntStateOf(startIndex.coerceIn(0, (urls.size - 1).coerceAtLeast(0))) }
+              var saving by remember { mutableStateOf(false) }
+              var message by remember { mutableStateOf<String?>(null) }
+              val context = LocalContext.current
+              val scope = rememberCoroutineScope()
+              val placeholder = softPainter()
+              androidx.compose.foundation.layout.Box(
+                  modifier = androidx.compose.foundation.layout.fillMaxSize(),
+                  contentAlignment = Alignment.Center,
+              ) {
+                  AsyncImage(
+                      model = urls.getOrNull(index),
+                      contentDescription = null,
+                      modifier = androidx.compose.foundation.layout.fillMaxSize().clickable {
+                          if (urls.isNotEmpty()) index = (index + 1) % urls.size
+                          message = null
+                      },
+                      contentScale = ContentScale.Fit,
+                      placeholder = placeholder,
+                  )
+                  Column(
+                      modifier = Modifier.align(Alignment.BottomCenter)
+                          .background(Color.Black.copy(alpha = .62f), androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
+                          .padding(horizontal = 10.dp, vertical = 6.dp),
+                      horizontalAlignment = Alignment.CenterHorizontally,
+                  ) {
+                      if (message != null) Text(message.orEmpty(), style = MaterialTheme.typography.labelSmall, color = Color.White, textAlign = TextAlign.Center)
+                      if (urls.size > 1) Text("${index + 1}/${urls.size} · 点击图片下一张", style = MaterialTheme.typography.labelSmall, color = Color.White)
+                      FilledTonalButton(
+                          onClick = {
+                              val url = urls.getOrNull(index) ?: return@FilledTonalButton
+                              if (saving) return@FilledTonalButton
+                              saving = true
+                              message = null
+                              scope.launch {
+                                  val result = container.saveImage(context, url)
+                                  saving = false
+                                  message = if (result.isSuccess) "已保存到相册" else "保存失败，请检查网络"
+                              }
+                          },
+                          enabled = !saving && urls.isNotEmpty(),
+                      ) { Text(if (saving) "保存中…" else "下载图片") }
+                  }
+              }
+          }
+          WEAR_EOF
+          cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt <<'WEAR_EOF'
+          package com.zailinn.c001apk.wear
+          
+          import androidx.compose.foundation.horizontalScroll
+          import androidx.compose.foundation.layout.Arrangement
+          import androidx.compose.foundation.layout.Column
+          import androidx.compose.foundation.layout.Row
+          import androidx.compose.foundation.layout.Spacer
+          import androidx.compose.foundation.layout.fillMaxSize
+          import androidx.compose.foundation.layout.fillMaxWidth
+          import androidx.compose.foundation.layout.padding
+          import androidx.compose.foundation.layout.width
+          import androidx.compose.foundation.rememberScrollState
+          import androidx.compose.foundation.pager.HorizontalPager
+          import androidx.compose.foundation.pager.rememberPagerState
+          import androidx.compose.runtime.Composable
+          import androidx.compose.runtime.LaunchedEffect
+          import androidx.compose.runtime.getValue
+          import androidx.compose.runtime.mutableIntStateOf
+          import androidx.compose.runtime.mutableStateOf
+          import androidx.compose.runtime.remember
+          import androidx.compose.runtime.rememberCoroutineScope
+          import androidx.compose.runtime.setValue
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.text.input.ImeAction
+          import androidx.compose.ui.text.style.TextOverflow
+          import androidx.compose.ui.unit.dp
+          import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+          import androidx.wear.compose.foundation.lazy.items
+          import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+          import androidx.wear.compose.material3.FilledTonalButton
+          import androidx.wear.compose.material3.ListHeader
+          import androidx.wear.compose.material3.MaterialTheme
+          import androidx.wear.compose.material3.ScreenScaffold
+          import androidx.wear.compose.material3.Text
+          import com.zailinn.c001apk.core.model.Datum
+          import com.zailinn.c001apk.core.model.LoadResult
+          import com.zailinn.c001apk.core.net.Page
+          import kotlinx.coroutines.launch
+          
+          private data class Channel(val title: String)
+          private val channels = listOf("搜索", "推荐", "热门", "话题", "数码", "酷图")
+          
+          @Composable
+          fun ChannelHubScreen(
+              container: WearContainer,
+              onOpenFeed: (Datum) -> Unit,
+              onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+              onOpenCategory: (Datum) -> Unit,
+              onMe: () -> Unit,
+          ) {
+              val pager = rememberPagerState(initialPage = 1) { channels.size }
+              val scope = rememberCoroutineScope()
+              Column(Modifier.fillMaxSize()) {
+                  Row(
+                      Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                  ) {
+                      FilledTonalButton(onClick = onMe, modifier = Modifier.weight(1f)) { Text("我的", maxLines = 1) }
+                      Spacer(Modifier.width(6.dp))
+                      Text(channels[pager.currentPage], style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f), maxLines = 1)
+                  }
+                  Row(
+                      Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
+                      horizontalArrangement = Arrangement.spacedBy(4.dp),
+                  ) {
+                      channels.forEachIndexed { index, title ->
+                          FilledTonalButton(onClick = { scope.launch { pager.animateScrollToPage(index) } }) {
+                              Text(title, maxLines = 1)
+                          }
+                      }
+                  }
+                  HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
+                      when (page) {
+                          0 -> SearchChannel(container, onOpenFeed, onOpenUser, onOpenTarget)
+                          1 -> FeedChannel(container, "推荐", null, null, onOpenFeed, onOpenUser, onOpenTarget)
+                          2 -> FeedChannel(container, "热门", "/page?url=V9_HOME_TAB_RANKING", "热榜", onOpenFeed, onOpenUser, onOpenTarget)
+                          3 -> CategoryIndexChannel(container, topic = true, onOpenCategory = onOpenCategory)
+                          4 -> CategoryIndexChannel(container, topic = false, onOpenCategory = onOpenCategory)
+                          else -> FeedChannel(container, "酷图", "/page?url=V11_FIND_COOLPIC", "酷图", onOpenFeed, onOpenUser, onOpenTarget)
+                      }
+                  }
+              }
+          }
+          
+          @Composable
+          private fun FeedChannel(
+              container: WearContainer,
+              title: String,
+              url: String?,
+              dataTitle: String?,
+              onOpenFeed: (Datum) -> Unit,
+              onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+          ) {
+              val feed = remember(title, container.accountVersion) {
+                  PagedFeed { page ->
+                      if (url == null) container.repository.homeFeed(page, 1, container.installTime)
+                      else container.repository.dataList(url, dataTitle ?: title, page, hideFolded = true)
+                  }
+              }
+              val state = rememberScalingLazyListState()
+              val cards = remember(feed.items) { feed.items.filter { it.entityType == "feed" } }
+              LaunchedEffect(feed.loadedPages) { if (feed.loadedPages == 0) feed.loadNext() }
+              PrefetchNearEnd(feed, state, cards.size)
+              ScreenScaffold(scrollState = state) { padding ->
+                  ScalingLazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = padding) {
+                      item { ListHeader { Text(title) } }
+                      items(cards, key = { it.entityId ?: it.id ?: it.hashCode().toString() }) {
+                          FeedCard(it, onClick = { onOpenFeed(it) }, onUser = onOpenUser, onTarget = onOpenTarget)
+                      }
+                      item { ListFooter(feed, emptyText = if (cards.isEmpty()) "暂无内容" else "没有更多了") }
+                  }
+              }
+          }
+          
+          @Composable
+          private fun CategoryIndexChannel(container: WearContainer, topic: Boolean, onOpenCategory: (Datum) -> Unit) {
+              var state by remember(topic) { mutableStateOf<LoadResult<List<Datum>>>(LoadResult.Loading) }
+              LaunchedEffect(topic) {
+                  state = if (topic) {
+                      when (val result = container.repository.dataListFromUrl("/v6/page/dataList", listOf("url" to "V11_VERTICAL_TOPIC", "title" to "话题", "page" to "1"))) {
+                          is LoadResult.Success -> LoadResult.Success(result.value.firstOrNull()?.entities.orEmpty())
+                          is LoadResult.Error -> result
+                          LoadResult.Empty -> LoadResult.Empty
+                          LoadResult.Loading -> LoadResult.Loading
+                      }
+                  } else {
+                      container.repository.dataListFromUrl("/v6/product/categoryList")
+                  }
+              }
+              val list = (state as? LoadResult.Success)?.value.orEmpty()
+              val listState = rememberScalingLazyListState()
+              ScreenScaffold(scrollState = listState) { padding ->
+                  ScalingLazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = padding) {
+                      item { ListHeader { Text(if (topic) "话题" else "数码") } }
+                      if (state is LoadResult.Loading) item { PulsingText("加载中…") }
+                      if (state is LoadResult.Error) item { Text((state as LoadResult.Error).message, style = MaterialTheme.typography.bodySmall) }
+                      items(list, key = { it.entityId ?: it.id ?: it.hashCode().toString() }) { item ->
+                          FilledTonalButton(
+                              onClick = { onOpenCategory(item) },
+                              modifier = Modifier.fillMaxWidth(),
+                              label = { Text(item.title.orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                              secondaryLabel = { Text(item.string("hot_num_txt") ?: item.string("feed_num_txt") ?: "进入板块", maxLines = 1) },
+                          )
+                      }
+                  }
+              }
+          }
+          
+          @Composable
+          private fun SearchChannel(
+              container: WearContainer,
+              onOpenFeed: (Datum) -> Unit,
+              onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+          ) {
+              var text by remember { mutableStateOf("") }
+              var keyword by remember { mutableStateOf<String?>(null) }
+              val submit = { val value = text.trim(); if (value.isNotEmpty()) { container.addHistory(value); keyword = value } }
+              val listState = rememberScalingLazyListState()
+              ScreenScaffold(scrollState = listState) { padding ->
+                  ScalingLazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = padding) {
+                      item { ListHeader { Text("搜索") } }
+                      item {
+                          WatchTextField(value = text, onValueChange = { text = it }, hint = "动态、数码、话题、用户", imeAction = ImeAction.Search, onImeAction = submit)
+                      }
+                      item { FilledTonalButton(onClick = submit, enabled = text.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("搜索") } }
+                      if (keyword == null && container.history.isNotEmpty()) {
+                          item { ListHeader { Text("最近搜索") } }
+                          items(container.history) { word -> FilledTonalButton(onClick = { text = word; keyword = word }, modifier = Modifier.fillMaxWidth()) { Text(word, maxLines = 1) } }
+                      }
+                      keyword?.let { value ->
+                          item { SearchResultsSection(container, value, onOpenFeed, onOpenUser, onOpenTarget) }
+                      }
+                  }
+              }
+          }
+          
+          @Composable
+          private fun SearchResultsSection(
+              container: WearContainer,
+              keyword: String,
+              onOpenFeed: (Datum) -> Unit,
+              onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+          ) {
+              Column(Modifier.fillMaxWidth()) {
+                  Text("搜索：$keyword", style = MaterialTheme.typography.titleSmall)
+                  SearchTypeButton(container, keyword, "动态", "feed", onOpenFeed, onOpenUser, onOpenTarget)
+                  SearchTypeButton(container, keyword, "数码", "product", onOpenFeed, onOpenUser, onOpenTarget)
+                  SearchTypeButton(container, keyword, "话题", "feedTopic", onOpenFeed, onOpenUser, onOpenTarget)
+                  SearchTypeButton(container, keyword, "用户", "user", onOpenFeed, onOpenUser, onOpenTarget)
+              }
+          }
+          
+          @Composable
+          private fun SearchTypeButton(
+              container: WearContainer,
+              keyword: String,
+              label: String,
+              type: String,
+              onOpenFeed: (Datum) -> Unit,
+              onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+          ) {
+              var opened by remember(keyword, type) { mutableStateOf(false) }
+              var results by remember(keyword, type) { mutableStateOf<List<Datum>>(emptyList()) }
+              var loading by remember(keyword, type) { mutableStateOf(false) }
+              Column(Modifier.fillMaxWidth()) {
+                  FilledTonalButton(onClick = {
+                      if (opened) return@FilledTonalButton
+                      opened = true
+                      loading = true
+                      // Launching from composition is avoided; the visible result section is loaded below.
+                  }, modifier = Modifier.fillMaxWidth()) { Text("$label 结果") }
+                  if (opened && !loading) {
+                      results.forEach { item -> SearchResultCard(item, onOpenFeed, onOpenUser, onOpenTarget) }
+                  }
+                  if (opened && loading) {
+                      LaunchedEffect(keyword, type) {
+                          val result = container.repository.search(type, "all", "default", keyword, 0, null, null, Page())
+                          results = (result as? LoadResult.Success)?.value.orEmpty().take(8)
+                          loading = false
+                      }
+                      PulsingText("加载中…")
+                  }
+              }
+          }
+          
+          @Composable
+          private fun SearchResultCard(item: Datum, onOpenFeed: (Datum) -> Unit, onOpenUser: (String) -> Unit, onOpenTarget: (Datum) -> Unit) {
+              val click = when (item.entityType) {
+                  "feed" -> ({ onOpenFeed(item) })
+                  "user" -> ({ item.uid?.let(onOpenUser) })
+                  "product", "topic" -> ({ onOpenTarget(item) })
+                  else -> ({})
+              }
+              FilledTonalButton(onClick = click, modifier = Modifier.fillMaxWidth()) {
+                  Text(item.title ?: item.displayName.ifBlank { item.messageTitle ?: plainText(item.message.orEmpty()) }, maxLines = 2, overflow = TextOverflow.Ellipsis)
+              }
+          }
+          
+          @Composable
+          fun CategoryFeedScreen(
+              container: WearContainer,
+              category: Datum,
+              onOpenFeed: (Datum) -> Unit,
+              onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+          ) {
+              val title = category.title.orEmpty().ifBlank { "板块" }
+              val url = category.url.orEmpty()
+              val feed = remember(url, container.accountVersion) { PagedFeed { page -> container.repository.dataList(url, title, page, hideFolded = true) } }
+              val state = rememberScalingLazyListState()
+              val cards = remember(feed.items) { feed.items.filter { it.entityType == "feed" } }
+              LaunchedEffect(feed.loadedPages) { if (feed.loadedPages == 0) feed.loadNext() }
+              PrefetchNearEnd(feed, state, cards.size)
+              ScreenScaffold(scrollState = state) { padding ->
+                  ScalingLazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = padding) {
+                      item { ListHeader { Text(title) } }
+                      items(cards, key = { it.entityId ?: it.id ?: it.hashCode().toString() }) { post ->
+                          FeedCard(post, onClick = { onOpenFeed(post) }, onUser = onOpenUser, onTarget = onOpenTarget)
+                      }
+                      item { ListFooter(feed, emptyText = "没有更多内容") }
+                  }
+              }
+          }
+          
+          @Composable
+          private fun PrefetchNearEnd(feed: PagedFeed, state: androidx.wear.compose.foundation.lazy.ScalingLazyListState, count: Int) {
+              LaunchedEffect(state, count) {
+                  androidx.compose.runtime.snapshotFlow { state.centerItemIndex }.collect { index ->
+                      if (count > 0 && index >= count - 2) feed.loadNext()
+                  }
+              }
+          }
+          WEAR_EOF
+          cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/Components.kt <<'WEAR_EOF'
+          package com.zailinn.c001apk.wear
+          
+          import androidx.compose.animation.core.RepeatMode
+          import androidx.compose.animation.core.animateFloat
+          import androidx.compose.animation.core.infiniteRepeatable
+          import androidx.compose.animation.core.rememberInfiniteTransition
+          import androidx.compose.animation.core.tween
+          import androidx.compose.foundation.background
+          import androidx.compose.foundation.clickable
+          import androidx.compose.foundation.horizontalScroll
+          import androidx.compose.foundation.rememberScrollState
+          import androidx.compose.foundation.layout.Arrangement
+          import androidx.compose.foundation.layout.Box
+          import androidx.compose.foundation.layout.Column
+          import androidx.compose.foundation.layout.Row
+          import androidx.compose.foundation.layout.Spacer
+          import androidx.compose.foundation.layout.fillMaxWidth
+          import androidx.compose.foundation.layout.height
+          import androidx.compose.foundation.layout.padding
+          import androidx.compose.foundation.layout.size
+          import androidx.compose.foundation.layout.width
+          import androidx.compose.foundation.shape.CircleShape
+          import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.foundation.text.BasicTextField
+          import androidx.compose.foundation.text.KeyboardActions
+          import androidx.compose.foundation.text.KeyboardOptions
+          import androidx.compose.runtime.Composable
+          import androidx.compose.runtime.LaunchedEffect
+          import androidx.compose.runtime.getValue
+          import androidx.compose.runtime.remember
+          import androidx.compose.runtime.rememberCoroutineScope
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.draw.clip
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.graphics.SolidColor
+          import androidx.compose.ui.graphics.graphicsLayer
+          import androidx.compose.ui.graphics.painter.ColorPainter
+          import androidx.compose.ui.layout.ContentScale
+          import androidx.compose.ui.text.input.ImeAction
+          import androidx.compose.ui.text.style.TextAlign
+          import androidx.compose.ui.text.style.TextOverflow
+          import androidx.compose.ui.unit.Dp
+          import androidx.compose.ui.unit.dp
+          import androidx.wear.compose.material3.Button
+          import androidx.wear.compose.material3.Card
+          import androidx.wear.compose.material3.FilledTonalButton
+          import androidx.wear.compose.material3.MaterialTheme
+          import androidx.wear.compose.material3.Text
+          import coil3.compose.AsyncImage
+          import com.zailinn.c001apk.core.model.Datum
+          import kotlinx.coroutines.launch
+          
+          /** The one brand accent, used for names, links and the selected state. */
+          val Brand = Color(0xFF2EC27E)
+          
+          @Composable
+          fun softPainter(): ColorPainter = ColorPainter(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.14f))
+          
+          @Composable
+          fun Avatar(url: String?, size: Dp, modifier: Modifier = Modifier) {
+              val placeholder = softPainter()
+              AsyncImage(
+                  model = url?.let(::fullUrl),
+                  contentDescription = null,
+                  modifier = modifier.size(size).clip(CircleShape),
+                  contentScale = ContentScale.Crop,
+                  placeholder = placeholder,
+                  error = placeholder,
+                  fallback = placeholder,
+              )
+          }
+          
+          /** A round badge with the first letter, for accounts without a picture. */
+          @Composable
+          fun LetterBadge(text: String, size: Dp) {
+              Box(
+                  modifier = Modifier.size(size).clip(CircleShape).background(Brand),
+                  contentAlignment = Alignment.Center,
+              ) {
+                  Text(text.take(1), style = MaterialTheme.typography.labelMedium, color = Color.Black)
+              }
+          }
+          
+          /** A feed in a list: who, what, a picture, and the counts. */
+          @Composable
+          fun FeedCard(
+              feed: Datum,
+              onClick: () -> Unit,
+              onUser: ((String) -> Unit)? = null,
+              onTarget: ((Datum) -> Unit)? = null,
+          ) {
+              val text = remember(feed) {
+                  feed.string("message_title")?.takeIf { it.isNotBlank() } ?: plainText(feed.text("message"))
+              }
+              val time = remember(feed) { relativeTime(feed.dateline) }
+              val stats = remember(feed) { "♥ ${feed.string("likenum") ?: "0"}   💬 ${feed.string("replynum") ?: "0"}" }
+              val picture = remember(feed) { feed.picArr.firstOrNull()?.let(::thumbnail) }
+              val placeholder = softPainter()
+              val authorUid = feed.authorUid?.takeIf { !feed.isAnonymous }
+              Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+                  Row(
+                      modifier = Modifier.fillMaxWidth().clickable(enabled = authorUid != null && onUser != null) {
+                          authorUid?.let { onUser?.invoke(it) }
+                      },
+                      verticalAlignment = Alignment.CenterVertically,
+                  ) {
+                      Avatar(feed.avatarUrl, 24.dp)
+                      Spacer(Modifier.width(6.dp))
+                      Text(
+                          feed.displayName.ifBlank { "酷安用户" },
+                          modifier = Modifier.weight(1f),
+                          style = MaterialTheme.typography.labelMedium,
+                          color = Brand,
+                          maxLines = 1,
+                          overflow = TextOverflow.Ellipsis,
+                      )
+                      Spacer(Modifier.width(4.dp))
+                      Text(time, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                  }
+                  Spacer(Modifier.height(4.dp))
+                  Text(
+                      text.ifBlank { "[图片动态]" },
+                      style = MaterialTheme.typography.bodySmall,
+                      maxLines = 3,
+                      overflow = TextOverflow.Ellipsis,
+                  )
+                  if (picture != null) {
+                      Spacer(Modifier.height(6.dp))
+                      AsyncImage(
+                          model = picture,
+                          contentDescription = null,
+                          modifier = Modifier.fillMaxWidth().height(70.dp).clip(RoundedCornerShape(12.dp)),
+                          contentScale = ContentScale.Crop,
+                          placeholder = placeholder,
+                          error = placeholder,
+                      )
+                  }
+                  if (onTarget != null) {
+                      FeedRelations(feed, onTarget)
+                  }
+                  Spacer(Modifier.height(4.dp))
+                  Text(stats, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+              }
+          }
+          
+          /** Compact, horizontally scrollable topic/model chips for the circular watch display. */
+          @Composable
+          fun FeedRelations(feed: Datum, onOpenTarget: (Datum) -> Unit) {
+              val rows = remember(feed) {
+                  (listOfNotNull(feed.targetRow) + feed.relationRows)
+                      .distinctBy { it.url ?: it.id ?: it.title.orEmpty() }
+                      .filter { !it.title.isNullOrBlank() }
+                      .take(5)
+              }
+              if (rows.isEmpty()) return
+              Spacer(Modifier.height(5.dp))
+              Row(
+                  modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                  horizontalArrangement = Arrangement.spacedBy(5.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+              ) {
+                  rows.forEach { target ->
+                      Card(onClick = { onOpenTarget(target) }) {
+                          Row(
+                              modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                              verticalAlignment = Alignment.CenterVertically,
+                          ) {
+                              target.logo?.takeIf { it.isNotBlank() }?.let {
+                                  Avatar(it, 15.dp)
+                                  Spacer(Modifier.width(4.dp))
+                              }
+                              Text(
+                                  target.title.orEmpty(),
+                                  style = MaterialTheme.typography.labelSmall,
+                                  color = Brand,
+                                  maxLines = 1,
+                                  overflow = TextOverflow.Ellipsis,
+                              )
+                          }
+                      }
+                  }
+              }
+          }
+          
+          /** A comment with its embedded sub-reply preview, matching the phone client's nested replies. */
+          @Composable
+          fun ReplyCard(reply: Datum, onUser: (String) -> Unit, onOpenThread: (Datum) -> Unit) {
+              val text = remember(reply) { plainText(reply.text("message")).ifBlank { "[图片]" } }
+              val meta = remember(reply) { "${relativeTime(reply.dateline)}   ♥ ${reply.string("likenum") ?: "0"}" }
+              Card(onClick = { reply.authorUid?.takeIf { !reply.isAnonymous }?.let(onUser) }, modifier = Modifier.fillMaxWidth()) {
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                      Avatar(reply.avatarUrl, 18.dp)
+                      Spacer(Modifier.width(6.dp))
+                      Text(
+                          reply.displayName,
+                          modifier = Modifier.weight(1f),
+                          style = MaterialTheme.typography.labelMedium,
+                          color = Brand,
+                          maxLines = 1,
+                          overflow = TextOverflow.Ellipsis,
+                      )
+                  }
+                  Spacer(Modifier.height(3.dp))
+                  Text(text, style = MaterialTheme.typography.bodySmall, maxLines = 6, overflow = TextOverflow.Ellipsis)
+                  Spacer(Modifier.height(3.dp))
+                  Text(meta, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+          
+                  val nested = reply.replyRows.take(3)
+                  if (nested.isNotEmpty()) {
+                      Spacer(Modifier.height(5.dp))
+                      Column(
+                          modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainer),
+                      ) {
+                          nested.forEach { child ->
+                              Row(
+                                  Modifier.fillMaxWidth().clickable { child.authorUid?.takeIf { !child.isAnonymous }?.let(onUser) }.padding(horizontal = 8.dp, vertical = 5.dp),
+                                  verticalAlignment = Alignment.Top,
+                              ) {
+                                  Avatar(child.avatarUrl, 16.dp)
+                                  Spacer(Modifier.width(5.dp))
+                                  Text(
+                                      "${child.displayName}：${plainText(child.text("message")).ifBlank { "[图片]" }}",
+                                      style = MaterialTheme.typography.labelSmall,
+                                      maxLines = 3,
+                                      overflow = TextOverflow.Ellipsis,
+                                  )
+                              }
+                          }
+                          val more = reply.int("replyRowsMore") ?: 0
+                          if (more > 0 || (reply.int("replynum") ?: 0) > nested.size) {
+                              Text(
+                                  "查看全部回复（${reply.string("replynum") ?: "${nested.size}"}）",
+                                  Modifier.fillMaxWidth().clickable { onOpenThread(reply) }.padding(horizontal = 8.dp, vertical = 6.dp),
+                                  color = Brand,
+                                  style = MaterialTheme.typography.labelSmall,
+                              )
+                          }
+                      }
+                  } else if ((reply.int("replynum") ?: 0) > 0) {
+                      Spacer(Modifier.height(4.dp))
+                      Text(
+                          "查看 ${reply.string("replynum") ?: ""} 条回复",
+                          Modifier.fillMaxWidth().clickable { onOpenThread(reply) }.padding(vertical = 4.dp),
+                          color = Brand,
+                          style = MaterialTheme.typography.labelSmall,
+                      )
+                  }
+              }
+          }
+          
+          /** A soft breathing text for loading states. The fade runs in the draw phase, so it never re-composes. */
+          @Composable
+          fun PulsingText(text: String) {
+              val transition = rememberInfiniteTransition(label = "pulse")
+              val alpha by transition.animateFloat(
+                  initialValue = 0.3f,
+                  targetValue = 1f,
+                  animationSpec = infiniteRepeatable(tween(durationMillis = 800), RepeatMode.Reverse),
+                  label = "pulseAlpha",
+              )
+              Text(
+                  text,
+                  style = MaterialTheme.typography.labelSmall,
+                  modifier = Modifier.graphicsLayer { this.alpha = alpha },
+              )
+          }
+          
+          /** Loads the next page when it scrolls into view; shows errors with a retry button. */
+          @Composable
+          fun ListFooter(feed: PagedFeed, emptyText: String = "没有更多了") {
+              val scope = rememberCoroutineScope()
+              val error = feed.error
+              when {
+                  error != null -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                      Text(error, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, maxLines = 3)
+                      Spacer(Modifier.height(4.dp))
+                      FilledTonalButton(
+                          onClick = { scope.launch { feed.loadNext() } },
+                          modifier = Modifier.fillMaxWidth(),
+                          label = { Text("重试") },
+                      )
+                  }
+                  feed.ended -> Text(emptyText, style = MaterialTheme.typography.labelSmall)
+                  else -> {
+                      LaunchedEffect(feed.loadedPages) { feed.loadNext() }
+                      PulsingText("加载中…")
+                  }
+              }
+          }
+          
+          /** A button that is filled when selected, tonal otherwise. */
+          @Composable
+          fun ChoiceButton(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+              if (selected) {
+                  Button(onClick = onClick, modifier = modifier, label = { Text(text, maxLines = 1) })
+              } else {
+                  FilledTonalButton(onClick = onClick, modifier = modifier, label = { Text(text, maxLines = 1) })
+              }
+          }
+          
+          class Choice(val label: String, val selected: Boolean, val onClick: () -> Unit)
+          
+          @Composable
+          fun ChoiceRow(vararg options: Choice) {
+              Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                  options.forEach { option ->
+                      ChoiceButton(option.label, option.selected, option.onClick, Modifier.weight(1f))
+                  }
+              }
+          }
+          
+          /** A rounded text box that opens the watch keyboard when tapped. */
+          @Composable
+          fun WatchTextField(
+              value: String,
+              onValueChange: (String) -> Unit,
+              hint: String,
+              modifier: Modifier = Modifier,
+              singleLine: Boolean = true,
+              imeAction: ImeAction = ImeAction.Default,
+              onImeAction: () -> Unit = {},
+          ) {
+              BasicTextField(
+                  value = value,
+                  onValueChange = onValueChange,
+                  singleLine = singleLine,
+                  textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                  cursorBrush = SolidColor(Brand),
+                  keyboardOptions = KeyboardOptions(imeAction = imeAction),
+                  keyboardActions = KeyboardActions(
+                      onSearch = { onImeAction() },
+                      onDone = { onImeAction() },
+                      onGo = { onImeAction() },
+                  ),
+                  modifier = modifier
+                      .fillMaxWidth()
+                      .clip(RoundedCornerShape(22.dp))
+                      .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+                      .padding(horizontal = 16.dp, vertical = 14.dp),
+                  decorationBox = { inner ->
+                      Box {
+                          if (value.isEmpty()) {
+                              Text(hint, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                          }
+                          inner()
+                      }
+                  },
+              )
+          }
+          WEAR_EOF
+          cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/DetailScreens.kt <<'WEAR_EOF'
+          package com.zailinn.c001apk.wear
+          
+          import androidx.compose.animation.animateContentSize
+          import androidx.compose.foundation.layout.Spacer
+          import androidx.compose.foundation.layout.fillMaxSize
+          import androidx.compose.foundation.layout.fillMaxWidth
+          import androidx.compose.foundation.layout.height
+          import androidx.compose.foundation.layout.size
+          import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.foundation.clickable
+          import androidx.compose.runtime.Composable
+          import androidx.compose.runtime.LaunchedEffect
+          import androidx.compose.runtime.getValue
+          import androidx.compose.runtime.mutableStateOf
+          import androidx.compose.runtime.remember
+          import androidx.compose.runtime.rememberCoroutineScope
+          import androidx.compose.runtime.setValue
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.draw.clip
+          import androidx.compose.ui.layout.ContentScale
+          import androidx.compose.ui.text.style.TextAlign
+          import androidx.compose.ui.text.style.TextOverflow
+          import androidx.compose.ui.unit.dp
+          import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+          import androidx.wear.compose.foundation.lazy.items
+          import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+          import androidx.wear.compose.material3.Button
+          import androidx.wear.compose.material3.FilledTonalButton
+          import androidx.wear.compose.material3.ListHeader
+          import androidx.wear.compose.material3.MaterialTheme
+          import androidx.wear.compose.material3.ScreenScaffold
+          import androidx.wear.compose.material3.Text
+          import coil3.compose.AsyncImage
+          import com.zailinn.c001apk.core.model.Datum
+          import com.zailinn.c001apk.core.model.LoadResult
+          import com.zailinn.c001apk.core.net.ApiFailure
+          import kotlinx.coroutines.CancellationException
+          import kotlinx.coroutines.launch
+          import kotlinx.serialization.json.JsonObject
+          import kotlinx.serialization.json.JsonPrimitive
+          
+          @Composable
+          fun DetailScreen(
+              container: WearContainer,
+              initial: Datum,
+              onUser: (String) -> Unit,
+              onTarget: (Datum) -> Unit,
+              onImages: (List<String>, Int) -> Unit,
+              onOpenThread: (Datum) -> Unit,
+          ) {
+              var feed by remember(initial) { mutableStateOf(initial) }
+              var sort by remember { mutableStateOf(0) }
+              var notice by remember { mutableStateOf<String?>(null) }
+              var liking by remember { mutableStateOf(false) }
+              val scope = rememberCoroutineScope()
+              val id = initial.id ?: initial.entityId.orEmpty()
+          
+              // The list copy is shown at once; the full text replaces it when it arrives.
+              LaunchedEffect(id) {
+                  val result = container.repository.feedDetail(id)
+                  if (result is LoadResult.Success) feed = result.value
+              }
+              val replies = remember(id, sort, container.accountVersion) {
+                  val listType = if (sort == 0) "lastupdate_desc" else "dateline_desc"
+                  PagedFeed { page -> container.repository.feedRepliesWithoutPrompt(id, listType, page).result }
+              }
+          
+              val listState = rememberScalingLazyListState()
+              val body = remember(feed) { plainText(feed.text("message")).ifBlank { feed.messageTitle.orEmpty() } }
+              val pictures = remember(feed) { feed.picArr }
+              val meta = remember(feed) { "${relativeTime(feed.dateline)}   💬 ${feed.string("replynum") ?: "0"}" }
+              val replyCards = remember(replies.items) { replies.items.filter { it.entityType == "feed_reply" } }
+              val placeholder = softPainter()
+          
+              fun toggleLike() {
+                  if (!container.session.isLogin) {
+                      notice = "登录后才能点赞"
+                      return
+                  }
+                  if (liking) return
+                  liking = true
+                  val liked = feed.isLiked
+                  scope.launch {
+                      try {
+                          val url = if (liked) "/v6/feed/unlike" else "/v6/feed/like"
+                          val result = container.repository.postAction(url, id = feed.id)
+                          val count = (result.dataObject?.get("count") as? JsonPrimitive)?.content
+                          feed = feed
+                              .with("likenum", count ?: feed.string("likenum"))
+                              .with("userAction", JsonObject(mapOf("like" to JsonPrimitive(if (liked) 0 else 1))))
+                          notice = null
+                      } catch (e: CancellationException) {
+                          throw e
+                      } catch (e: Exception) {
+                          notice = ApiFailure.from(e).message
+                      } finally {
+                          liking = false
+                      }
+                  }
+              }
+          
+              ScreenScaffold(scrollState = listState) { padding ->
+                  ScalingLazyColumn(
+                      modifier = Modifier.fillMaxSize(),
+                      state = listState,
+                      contentPadding = padding,
+                  ) {
+                      item {
+                          FilledTonalButton(
+                              onClick = { feed.authorUid?.takeIf { !feed.isAnonymous }?.let(onUser) },
+                              modifier = Modifier.fillMaxWidth(),
+                              icon = { Avatar(feed.avatarUrl, 28.dp) },
+                              label = { Text(feed.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                              secondaryLabel = { Text(relativeTime(feed.dateline), maxLines = 1) },
+                          )
+                      }
+                      item {
+                          Text(
+                              body.ifBlank { "[图片动态]" },
+                              style = MaterialTheme.typography.bodyMedium,
+                              // Grows smoothly when the full text replaces the preview.
+                              modifier = Modifier.fillMaxWidth().animateContentSize(),
+                          )
+                      }
+                      items(pictures.take(3).withIndex().toList()) { (index, url) ->
+                          AsyncImage(
+                              model = thumbnail(url),
+                              contentDescription = null,
+                              modifier = Modifier
+                                  .fillMaxWidth()
+                                  .height(110.dp)
+                                  .clip(RoundedCornerShape(16.dp))
+                                  .clickable { onImages(pictures.map(::fullUrl), index) },
+                              contentScale = ContentScale.Crop,
+                              placeholder = placeholder,
+                              error = placeholder,
+                          )
+                      }
+                      if (pictures.size > 3) {
+                          item {
+                              Text(
+                                  "共 ${pictures.size} 张图，点图片查看",
+                                  style = MaterialTheme.typography.labelSmall,
+                                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                              )
+                          }
+                      }
+                      item { FeedRelations(feed, onTarget) }
+                      item {
+                          if (feed.isLiked) {
+                              Button(
+                                  onClick = ::toggleLike,
+                                  modifier = Modifier.fillMaxWidth(),
+                                  label = { Text("♥ 已赞 ${feed.string("likenum") ?: "0"}") },
+                                  secondaryLabel = { Text(meta, maxLines = 1) },
+                              )
+                          } else {
+                              FilledTonalButton(
+                                  onClick = ::toggleLike,
+                                  modifier = Modifier.fillMaxWidth(),
+                                  label = { Text("♡ 点赞 ${feed.string("likenum") ?: "0"}") },
+                                  secondaryLabel = { Text(meta, maxLines = 1) },
+                              )
+                          }
+                      }
+                      notice?.let { message ->
+                          item {
+                              Text(
+                                  message,
+                                  style = MaterialTheme.typography.labelSmall,
+                                  color = MaterialTheme.colorScheme.error,
+                                  textAlign = TextAlign.Center,
+                              )
+                          }
+                      }
+                      item { ListHeader { Text("评论") } }
+                      item {
+                          ChoiceRow(
+                              Choice("默认", sort == 0) { sort = 0 },
+                              Choice("最新", sort == 1) { sort = 1 },
+                          )
+                      }
+                      items(replyCards, key = { it.entityId ?: it.id ?: it.hashCode().toString() }) { reply ->
+                          ReplyCard(
+                              reply,
+                              onUser = { uid -> onUser(uid) },
+                              onOpenThread = onOpenThread,
+                          )
+                      }
+                      item { ListFooter(replies, emptyText = if (replyCards.isEmpty()) "还没有评论" else "没有更多了") }
+                  }
+              }
+          }
+          
+          @Composable
+          fun ReplyThreadScreen(
+              container: WearContainer,
+              origin: Datum,
+              onUser: (String) -> Unit,
+          ) {
+              val list = remember(origin.id, container.accountVersion) {
+                  PagedFeed { page ->
+                      try {
+                          container.repository.subRepliesVerified(origin.id.orEmpty(), page)
+                      } catch (e: CancellationException) {
+                          throw e
+                      } catch (e: Exception) {
+                          LoadResult.Error(ApiFailure.from(e).message)
+                      }
+                  }
+              }
+              val state = rememberScalingLazyListState()
+              ScreenScaffold(scrollState = state) { padding ->
+                  ScalingLazyColumn(
+                      modifier = Modifier.fillMaxSize(),
+                      state = state,
+                      contentPadding = padding,
+                  ) {
+                      item { ListHeader { Text("评论回复") } }
+                      item {
+                          ReplyCard(origin, onUser = onUser, onOpenThread = { })
+                      }
+                      if (list.items.isEmpty() && list.error == null) {
+                          item {
+                              Text(
+                                  "正在加载更多回复…",
+                                  style = MaterialTheme.typography.labelSmall,
+                                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                  textAlign = TextAlign.Center,
+                              )
+                          }
+                      }
+                      items(list.items.filter { it.id != origin.id }, key = { it.entityId ?: it.id ?: it.hashCode().toString() }) { reply ->
+                          ReplyCard(reply, onUser = onUser, onOpenThread = { })
+                      }
+                      item {
+                          ListFooter(
+                              list,
+                              emptyText = if (list.error != null) "完整回复需要登录/验证，已显示上方预览" else "没有更多回复了",
+                          )
+                      }
+                  }
+              }
+              LaunchedEffect(list.loadedPages) {
+                  if (list.loadedPages == 0) list.loadNext()
+              }
+          }
+          
+          @Composable
+          fun UserScreen(
+              container: WearContainer,
+              uid: String,
+              onOpenFeed: (Datum) -> Unit,
+              onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+              onImages: (List<String>, Int) -> Unit,
+          ) {
+              var info by remember(uid) { mutableStateOf<Datum?>(null) }
+              var failure by remember(uid) { mutableStateOf<String?>(null) }
+              var notice by remember(uid) { mutableStateOf<String?>(null) }
+              val scope = rememberCoroutineScope()
+          
+              LaunchedEffect(uid) {
+                  when (val result = container.repository.userSpace(uid)) {
+                      is LoadResult.Success -> info = result.value
+                      is LoadResult.Error -> failure = result.message
+                      else -> Unit
+                  }
+              }
+              val feeds = remember(uid, container.accountVersion) {
+                  PagedFeed { page -> container.repository.userFeed(uid, page) }
+              }
+              val cards = remember(feeds.items) { feeds.items.filter { it.entityType == "feed" } }
+              val listState = rememberScalingLazyListState()
+              PrefetchWhenNearEnd(feeds, listState, cards.size)
+          
+              fun toggleFollow() {
+                  val current = info ?: return
+                  if (!container.session.isLogin) {
+                      notice = "登录后才能关注"
+                      return
+                  }
+                  val following = current.int("isFollow") == 1
+                  scope.launch {
+                      try {
+                          val url = if (following) "/v6/user/unfollow" else "/v6/user/follow"
+                          val result = container.repository.postAction(url, uid = uid)
+                          info = current.with("isFollow", result.dataText?.toIntOrNull() ?: if (following) 0 else 1)
+                          notice = null
+                      } catch (e: CancellationException) {
+                          throw e
+                      } catch (e: Exception) {
+                          notice = ApiFailure.from(e).message
+                      }
+                  }
+              }
+          
+              ScreenScaffold(scrollState = listState) { padding ->
+                  ScalingLazyColumn(
+                      modifier = Modifier.fillMaxSize(),
+                      state = listState,
+                      contentPadding = padding,
+                      horizontalAlignment = Alignment.CenterHorizontally,
+                  ) {
+                      val data = info
+                      if (data == null) {
+                          item { if (failure != null) Text(failure.orEmpty(), style = MaterialTheme.typography.bodySmall) else PulsingText("加载中…") }
+                      } else {
+                          item {
+                              Avatar(
+                                  data.userAvatar,
+                                  64.dp,
+                                  Modifier.clickable { data.userAvatar?.let { onImages(listOf(fullUrl(it)), 0) } },
+                              )
+                          }
+                          item {
+                              Text(
+                                  data.username.orEmpty(),
+                                  style = MaterialTheme.typography.titleMedium,
+                                  color = Brand,
+                                  textAlign = TextAlign.Center,
+                                  maxLines = 2,
+                              )
+                          }
+                          item {
+                              Text(
+                                  "Lv.${data.text("level")}   ${data.text("feed")}动态   ${data.text("be_like_num")}赞",
+                                  style = MaterialTheme.typography.labelSmall,
+                                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                  textAlign = TextAlign.Center,
+                              )
+                          }
+                          item {
+                              Text(
+                                  "${data.text("follow")}关注   ${data.text("fans")}粉丝",
+                                  style = MaterialTheme.typography.labelSmall,
+                                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                  textAlign = TextAlign.Center,
+                              )
+                          }
+                          data.string("bio")?.takeIf { it.isNotBlank() }?.let { bio ->
+                              item {
+                                  Text(
+                                      plainText(bio),
+                                      style = MaterialTheme.typography.bodySmall,
+                                      textAlign = TextAlign.Center,
+                                      maxLines = 4,
+                                      overflow = TextOverflow.Ellipsis,
+                                  )
+                              }
+                          }
+                          item {
+                              val following = data.int("isFollow") == 1
+                              ChoiceButton(
+                                  text = if (following) "已关注" else "关注",
+                                  selected = !following,
+                                  onClick = ::toggleFollow,
+                                  modifier = Modifier.fillMaxWidth(),
+                              )
+                          }
+                          notice?.let { message ->
+                              item {
+                                  Text(
+                                      message,
+                                      style = MaterialTheme.typography.labelSmall,
+                                      color = MaterialTheme.colorScheme.error,
+                                      textAlign = TextAlign.Center,
+                                  )
+                              }
+                          }
+                          item { ListHeader { Text("动态") } }
+                          items(cards, key = { it.entityId ?: it.id ?: it.hashCode().toString() }) { feedItem ->
+                              FeedCard(feedItem, onClick = { onOpenFeed(feedItem) }, onUser = onOpenUser, onTarget = onOpenTarget)
+                          }
+                          item { ListFooter(feeds, emptyText = if (cards.isEmpty()) "还没有动态" else "没有更多了") }
+                      }
+                  }
+              }
+          }
+          
+          @Composable
+          private fun PrefetchWhenNearEnd(feed: PagedFeed, listState: androidx.wear.compose.foundation.lazy.ScalingLazyListState, count: Int) {
+              LaunchedEffect(listState, count) {
+                  androidx.compose.runtime.snapshotFlow { listState.centerItemIndex }.collect { index ->
+                      if (count > 0 && index >= count - 2) feed.loadNext()
+                  }
+              }
+          }
+          WEAR_EOF
+          cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/HomeScreens.kt <<'WEAR_EOF'
+          package com.zailinn.c001apk.wear
+          
+          import androidx.compose.foundation.layout.Spacer
+          import androidx.compose.foundation.layout.fillMaxSize
+          import androidx.compose.foundation.layout.fillMaxWidth
+          import androidx.compose.foundation.layout.height
+          import androidx.compose.runtime.Composable
+          import androidx.compose.runtime.LaunchedEffect
+          import androidx.compose.runtime.getValue
+          import androidx.compose.runtime.mutableStateOf
+          import androidx.compose.runtime.remember
+          import androidx.compose.runtime.setValue
+          import androidx.compose.runtime.snapshotFlow
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.text.input.ImeAction
+          import androidx.compose.ui.text.style.TextAlign
+          import androidx.compose.ui.unit.dp
+          import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+          import androidx.wear.compose.foundation.lazy.ScalingLazyListState
+          import androidx.wear.compose.foundation.lazy.items
+          import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+          import androidx.wear.compose.material3.EdgeButton
+          import androidx.wear.compose.material3.FilledTonalButton
+          import androidx.wear.compose.material3.ListHeader
+          import androidx.wear.compose.material3.MaterialTheme
+          import androidx.wear.compose.material3.ScreenScaffold
+          import androidx.wear.compose.material3.Text
+          import com.zailinn.c001apk.core.model.Datum
+          
+          private fun keyOf(item: Datum): String = item.entityId ?: item.id ?: item.hashCode().toString()
+          
+          /** A feed list that fetches the next page a little before the end is reached. */
+          @Composable
+          private fun PrefetchWhenNearEnd(feed: PagedFeed, listState: ScalingLazyListState, count: Int) {
+              LaunchedEffect(listState, count) {
+                  snapshotFlow { listState.centerItemIndex }.collect { index ->
+                      if (count > 0 && index >= count - 2) feed.loadNext()
+                  }
+              }
+          }
+          
+          @Composable
+          fun HomeScreen(
+              container: WearContainer,
+              feed: PagedFeed,
+              listState: ScalingLazyListState,
+              onOpenFeed: (Datum) -> Unit,
+              onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+              onSearch: () -> Unit,
+              onMe: () -> Unit,
+          ) {
+              val cards = remember(feed.items) { feed.items.filter { it.entityType == "feed" } }
+              PrefetchWhenNearEnd(feed, listState, cards.size)
+              val account = container.account
+              val name = account?.let { runCatching { java.net.URLDecoder.decode(it.username, "UTF-8") }.getOrDefault(it.username) }
+          
+              ScreenScaffold(
+                  scrollState = listState,
+                  edgeButton = { EdgeButton(onClick = onSearch) { Text("搜索") } },
+              ) { padding ->
+                  ScalingLazyColumn(
+                      modifier = Modifier.fillMaxSize(),
+                      state = listState,
+                      contentPadding = padding,
+                  ) {
+                      item {
+                          FilledTonalButton(
+                              onClick = onMe,
+                              modifier = Modifier.fillMaxWidth(),
+                              icon = { LetterBadge(name ?: "游", 28.dp) },
+                              label = { Text(name ?: "游客模式", maxLines = 1) },
+                              secondaryLabel = { Text(if (name == null) "点此登录" else "我的", maxLines = 1) },
+                          )
+                      }
+                      item { ListHeader { Text("推荐") } }
+                      items(cards, key = { keyOf(it) }) { feedItem ->
+                          FeedCard(feedItem, onClick = { onOpenFeed(feedItem) }, onUser = onOpenUser, onTarget = onOpenTarget)
+                      }
+                      item { ListFooter(feed) }
+                  }
+              }
+          }
+          
+          @Composable
+          fun SearchScreen(container: WearContainer, onSubmit: (String) -> Unit) {
+              var text by remember { mutableStateOf("") }
+              val listState = rememberScalingLazyListState()
+              val submit = { if (text.isNotBlank()) onSubmit(text.trim()) }
+              ScreenScaffold(
+                  scrollState = listState,
+                  edgeButton = { EdgeButton(onClick = submit, enabled = text.isNotBlank()) { Text("搜索") } },
+              ) { padding ->
+                  ScalingLazyColumn(
+                      modifier = Modifier.fillMaxSize(),
+                      state = listState,
+                      contentPadding = padding,
+                  ) {
+                      item { ListHeader { Text("搜索") } }
+                      item {
+                          WatchTextField(
+                              value = text,
+                              onValueChange = { text = it },
+                              hint = "点这里输入关键词",
+                              imeAction = ImeAction.Search,
+                              onImeAction = submit,
+                          )
+                      }
+                      if (container.history.isNotEmpty()) {
+                          item { ListHeader { Text("最近搜索") } }
+                          items(container.history) { keyword ->
+                              FilledTonalButton(
+                                  onClick = { onSubmit(keyword) },
+                                  modifier = Modifier.fillMaxWidth(),
+                                  label = { Text(keyword, maxLines = 1) },
+                              )
+                          }
+                          item {
+                              FilledTonalButton(
+                                  onClick = { container.clearHistory() },
+                                  modifier = Modifier.fillMaxWidth(),
+                                  label = { Text("清除记录") },
+                              )
+                          }
+                      }
+                  }
+              }
+          }
+          
+          @Composable
+          fun ResultsScreen(
+              keyword: String,
+              feed: PagedFeed,
+              listState: ScalingLazyListState,
+              onOpenFeed: (Datum) -> Unit,
+              onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+          ) {
+              val cards = remember(feed.items) { feed.items.filter { it.entityType == "feed" } }
+              PrefetchWhenNearEnd(feed, listState, cards.size)
+              ScreenScaffold(scrollState = listState) { padding ->
+                  ScalingLazyColumn(
+                      modifier = Modifier.fillMaxSize(),
+                      state = listState,
+                      contentPadding = padding,
+                  ) {
+                      item { ListHeader { Text("“$keyword”") } }
+                      items(cards, key = { keyOf(it) }) { feedItem ->
+                          FeedCard(feedItem, onClick = { onOpenFeed(feedItem) }, onUser = onOpenUser, onTarget = onOpenTarget)
+                      }
+                      item { ListFooter(feed, emptyText = if (cards.isEmpty()) "没有找到相关动态" else "没有更多了") }
+                  }
+              }
+          }
+          
+          @Composable
+          fun AboutScreen() {
+              val listState = rememberScalingLazyListState()
+              ScreenScaffold(scrollState = listState) { padding ->
+                  ScalingLazyColumn(
+                      modifier = Modifier.fillMaxSize(),
+                      state = listState,
+                      contentPadding = padding,
+                  ) {
+                      item { ListHeader { Text("关于") } }
+                      item {
+                          Text(
+                              "酷安 Wear OS 版 0.5",
+                              style = MaterialTheme.typography.titleSmall,
+                              textAlign = TextAlign.Center,
+                          )
+                      }
+                      item { Spacer(Modifier.height(2.dp)) }
+                      item {
+                          Text(
+                              "与手机版共用同一套网络层。支持游客浏览、Cookie 登录、搜索、动态详情、评论、点赞、用户主页、机型/话题板块和看图。动态作者头像/名称可打开主页，动态关联的机型与话题标签可点入对应板块。\n\n手表上不能打开网页，所以账号密码登录、验证码和发帖暂不支持。",
+                              style = MaterialTheme.typography.bodySmall,
+                              textAlign = TextAlign.Center,
+                          )
+                      }
+                  }
+              }
+          }
+          WEAR_EOF
+          cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/ImageSaver.kt <<'WEAR_EOF'
+          package com.zailinn.c001apk.wear
+          
+          import android.content.ContentValues
+          import android.content.Context
+          import android.os.Build
+          import android.os.Environment
+          import android.provider.MediaStore
+          import com.zailinn.c001apk.core.net.HttpsUpgrade
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.withContext
+          import okhttp3.OkHttpClient
+          import okhttp3.Request
+          import java.net.URLConnection
+          
+          /** Saves a remote image into the watch gallery without requiring storage permission on Android 10+. */
+          suspend fun saveWatchImage(context: Context, http: OkHttpClient, rawUrl: String): Result<Unit> = withContext(Dispatchers.IO) {
+              runCatching {
+                  val url = HttpsUpgrade.url(rawUrl) ?: error("图片地址无效")
+                  val request = Request.Builder().url(url).build()
+                  http.newCall(request).execute().use { response ->
+                      check(response.isSuccessful) { "下载失败（HTTP ${response.code}）" }
+                      val body = response.body ?: error("图片内容为空")
+                      check(body.contentLength() <= 64L * 1024 * 1024) { "图片过大" }
+                      val mime = body.contentType()?.toString()
+                          ?: URLConnection.guessContentTypeFromName(url.substringBefore('?'))
+                          ?: "image/jpeg"
+                      val ext = when {
+                          mime.contains("png") -> ".png"
+                          mime.contains("webp") -> ".webp"
+                          mime.contains("gif") -> ".gif"
+                          else -> ".jpg"
+                      }
+                      val name = "coolapk_${System.currentTimeMillis()}$ext"
+                      val resolver = context.contentResolver
+                      val values = ContentValues().apply {
+                          put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                          put(MediaStore.Images.Media.MIME_TYPE, mime)
+                          if (Build.VERSION.SDK_INT >= 29) {
+                              put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/c001apk")
+                              put(MediaStore.Images.Media.IS_PENDING, 1)
+                          }
+                      }
+                      val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                      val uri = resolver.insert(collection, values) ?: error("无法创建相册文件")
+                      try {
+                          resolver.openOutputStream(uri)?.use { out ->
+                              body.byteStream().use { input ->
+                                  val buffer = ByteArray(64 * 1024)
+                                  var total = 0L
+                                  while (true) {
+                                      val read = input.read(buffer)
+                                      if (read < 0) break
+                                      total += read
+                                      check(total <= 64L * 1024 * 1024) { "图片过大" }
+                                      out.write(buffer, 0, read)
+                                  }
+                              }
+                          }
+                              ?: error("无法写入图片")
+                          if (Build.VERSION.SDK_INT >= 29) {
+                              resolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
+                          }
+                      } catch (e: Exception) {
+                          resolver.delete(uri, null, null)
+                          throw e
+                      }
+                  }
+              }
+          }
+          WEAR_EOF
+          cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/MainActivity.kt <<'WEAR_EOF'
+          package com.zailinn.c001apk.wear
+          
+          import android.os.Bundle
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.setContent
+          
+          class MainActivity : ComponentActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  val container = (application as WearApplication).container
+                  setContent { WearApp(container) }
+              }
+          }
+          WEAR_EOF
+          cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/PagedFeed.kt <<'WEAR_EOF'
+          package com.zailinn.c001apk.wear
+          
+          import androidx.compose.runtime.getValue
+          import androidx.compose.runtime.mutableIntStateOf
+          import androidx.compose.runtime.mutableStateOf
+          import androidx.compose.runtime.setValue
+          import com.zailinn.c001apk.core.model.Datum
+          import com.zailinn.c001apk.core.model.LoadResult
+          import com.zailinn.c001apk.core.model.cursorFirstId
+          import com.zailinn.c001apk.core.model.cursorLastId
+          import com.zailinn.c001apk.core.net.Page
+          import kotlinx.coroutines.CancellationException
+          
+          /** A list that loads page after page, with the same cursors the phone app uses. */
+          class PagedFeed(private val load: suspend (Page) -> LoadResult<List<Datum>>) {
+              var items by mutableStateOf<List<Datum>>(emptyList())
+                  private set
+              var error by mutableStateOf<String?>(null)
+                  private set
+              var ended by mutableStateOf(false)
+                  private set
+          
+              /** Counts finished loads, so the screen knows when to ask for the next page. */
+              var loadedPages by mutableIntStateOf(0)
+                  private set
+          
+              private var loading = false
+              private var page = 1
+              private var first: String? = null
+              private var last: String? = null
+              private var epoch = 0
+          
+              /** Starts over, as after a login; answers still on their way for the old list are dropped. */
+              fun reset() {
+                  epoch++
+                  loading = false
+                  page = 1
+                  first = null
+                  last = null
+                  items = emptyList()
+                  error = null
+                  ended = false
+                  loadedPages++
+              }
+          
+              suspend fun loadNext() {
+                  if (loading || ended) return
+                  loading = true
+                  error = null
+                  val mine = epoch
+                  try {
+                      val result = load(Page(page, first, last))
+                      if (mine != epoch) return
+                      when (result) {
+                          is LoadResult.Success -> {
+                              val fresh = result.value
+                              if (page == 1) first = fresh.cursorFirstId
+                              last = fresh.cursorLastId ?: last
+                              page++
+                              items = (items + fresh).distinctBy { it.entityId ?: it.id ?: it.hashCode().toString() }
+                          }
+                          LoadResult.Empty -> ended = true
+                          is LoadResult.Error -> error = result.message
+                          LoadResult.Loading -> Unit
+                      }
+                  } catch (e: CancellationException) {
+                      throw e
+                  } catch (e: Exception) {
+                      if (mine == epoch) error = e.message ?: "加载失败"
+                  } finally {
+                      if (mine == epoch) {
+                          loading = false
+                          loadedPages++
+                      }
+                  }
+              }
+          }
+          WEAR_EOF
+          cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/TargetScreen.kt <<'WEAR_EOF'
+          package com.zailinn.c001apk.wear
+          
+          import androidx.compose.foundation.layout.Column
+          import androidx.compose.foundation.layout.Row
+          import androidx.compose.foundation.layout.Spacer
+          import androidx.compose.foundation.layout.fillMaxSize
+          import androidx.compose.foundation.layout.fillMaxWidth
+          import androidx.compose.foundation.layout.height
+          import androidx.compose.foundation.layout.padding
+          import androidx.compose.foundation.layout.size
+          import androidx.compose.runtime.Composable
+          import androidx.compose.runtime.LaunchedEffect
+          import androidx.compose.runtime.getValue
+          import androidx.compose.runtime.mutableStateOf
+          import androidx.compose.runtime.remember
+          import androidx.compose.runtime.setValue
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.text.style.TextAlign
+          import androidx.compose.ui.text.style.TextOverflow
+          import androidx.compose.ui.unit.dp
+          import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+          import androidx.wear.compose.foundation.lazy.items
+          import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+          import androidx.wear.compose.material3.Button
+          import androidx.wear.compose.material3.ListHeader
+          import androidx.wear.compose.material3.MaterialTheme
+          import androidx.wear.compose.material3.ScreenScaffold
+          import androidx.wear.compose.material3.Text
+          import com.zailinn.c001apk.core.model.Datum
+          import com.zailinn.c001apk.core.model.LoadResult
+          
+          /** A topic tag or device/product board resolved from the relation chips on a post. */
+          data class WearTarget(val tag: String? = null, val id: String? = null)
+          
+          @Composable
+          fun TargetScreen(
+              container: WearContainer,
+              target: WearTarget,
+              onOpenFeed: (Datum) -> Unit,
+              onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+          ) {
+              var info by remember(target) { mutableStateOf<Datum?>(null) }
+              var failure by remember(target) { mutableStateOf<String?>(null) }
+              var retry by remember(target) { mutableStateOf(0) }
+              LaunchedEffect(target, retry) {
+                  info = null
+                  failure = null
+                  when (val result = container.repository.topicDetail(target.tag, target.id)) {
+                      is LoadResult.Success -> info = result.value
+                      is LoadResult.Error -> failure = result.message
+                      LoadResult.Empty -> failure = "暂时没有这个板块的信息"
+                      LoadResult.Loading -> Unit
+                  }
+              }
+          
+              val data = info
+              val isProduct = target.id != null || data?.entityType == "product"
+              val title = data?.title?.takeIf { it.isNotBlank() } ?: target.tag.orEmpty().ifBlank { "机型/话题" }
+              val posts = remember(target, data?.title, container.accountVersion) {
+                  PagedFeed { page ->
+                      val queryTitle = data?.title ?: target.tag.orEmpty()
+                      container.repository.search(
+                          type = "feed",
+                          feedType = "all",
+                          sort = "default",
+                          keyword = queryTitle,
+                          isStrict = 0,
+                          pageType = if (isProduct) "product_phone" else "tag",
+                          pageParam = if (isProduct) target.id else queryTitle,
+                          page = page,
+                      )
+                  }
+              }
+              LaunchedEffect(posts, data) {
+                  if (data != null) posts.loadNext()
+              }
+              val cards = remember(posts.items) { posts.items.filter { it.entityType == "feed" } }
+              val listState = rememberScalingLazyListState()
+          
+              ScreenScaffold(scrollState = listState) { padding ->
+                  ScalingLazyColumn(
+                      modifier = Modifier.fillMaxSize(),
+                      state = listState,
+                      contentPadding = padding,
+                      horizontalAlignment = Alignment.CenterHorizontally,
+                  ) {
+                      item { ListHeader { Text(if (isProduct) "机型板块" else "话题板块") } }
+                      if (data == null) {
+                          item {
+                              Text(
+                                  failure ?: "正在加载板块…",
+                                  style = MaterialTheme.typography.bodySmall,
+                                  textAlign = TextAlign.Center,
+                              )
+                          }
+                          if (failure != null) {
+                              item {
+                                  Button(onClick = { retry++ }, modifier = Modifier.fillMaxWidth(), label = { Text("重新加载") })
+                              }
+                          }
+                      } else {
+                          item {
+                              Row(
+                                  modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp),
+                                  verticalAlignment = Alignment.CenterVertically,
+                              ) {
+                                  if (!data.logo.isNullOrBlank()) Avatar(data.logo, 42.dp)
+                                  Spacer(Modifier.size(if (data.logo.isNullOrBlank()) 0.dp else 8.dp))
+                                  Column(modifier = Modifier.weight(1f)) {
+                                      Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                      Text(
+                                          listOfNotNull(
+                                              data.string("hot_num_txt")?.let { "${it}热度" },
+                                              data.string("commentnum_txt")?.let { "${it}讨论" },
+                                              data.string("follow_num_txt")?.let { "${it}关注" },
+                                          ).joinToString(" · ").ifBlank { if (isProduct) "设备讨论" else "话题动态" },
+                                          style = MaterialTheme.typography.labelSmall,
+                                          color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                      )
+                                  }
+                              }
+                          }
+                          data.description?.takeIf { it.isNotBlank() }?.let { description ->
+                              item {
+                                  Text(
+                                      plainText(description),
+                                      style = MaterialTheme.typography.bodySmall,
+                                      maxLines = 3,
+                                      overflow = TextOverflow.Ellipsis,
+                                      textAlign = TextAlign.Center,
+                                  )
+                              }
+                          }
+                          item { ListHeader { Text("相关动态") } }
+                          items(cards, key = { it.entityId ?: it.id ?: it.hashCode().toString() }) { post ->
+                              FeedCard(post, onClick = { onOpenFeed(post) }, onUser = onOpenUser, onTarget = onOpenTarget)
+                          }
+                          item { ListFooter(posts, emptyText = if (cards.isEmpty()) "暂时没有相关动态" else "没有更多了") }
+                      }
+                  }
+              }
+          }
+          WEAR_EOF
+          cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/Text.kt <<'WEAR_EOF'
+          package com.zailinn.c001apk.wear
+          
+          import android.text.Html
+          import android.util.LruCache
+          import com.zailinn.c001apk.core.model.Datum
+          import java.text.SimpleDateFormat
+          import java.util.Date
+          import java.util.Locale
+          
+          private val plainCache = LruCache<String, String>(300)
+          
+          /** The server sends HTML in messages; the watch shows plain text. Results are cached, since lists re-draw often. */
+          fun plainText(html: String): String {
+              if (html.isEmpty()) return ""
+              plainCache.get(html)?.let { return it }
+              val result = runCatching {
+                  Html.fromHtml(html.replace("\n", "<br>"), Html.FROM_HTML_MODE_LEGACY).toString()
+              }.getOrDefault(html.replace(Regex("<[^>]*>"), ""))
+                  .replace('\uFFFC', ' ')
+                  .trim()
+              plainCache.put(html, result)
+              return result
+          }
+          
+          /** Server-side thumbnail: far less data than the original, which is plenty for a watch. */
+          fun thumbnail(url: String): String {
+              val full = fullUrl(url)
+              return if (full.endsWith(".s.jpg")) full else "$full.s.jpg"
+          }
+          
+          fun fullUrl(url: String): String = if (url.startsWith("//")) "https:$url" else url
+          
+          val Datum.avatarUrl: String? get() = userInfo?.userAvatar ?: userAvatar
+          
+          val Datum.authorUid: String? get() = userInfo?.uid ?: uid
+          
+          fun relativeTime(seconds: Long?): String {
+              if (seconds == null) return ""
+              val diff = System.currentTimeMillis() / 1000 - seconds
+              return when {
+                  diff < 60 -> "刚刚"
+                  diff < 3600 -> "${diff / 60}分钟前"
+                  diff < 86400 -> "${diff / 3600}小时前"
+                  diff < 86400 * 30 -> "${diff / 86400}天前"
+                  else -> SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date(seconds * 1000))
+              }
+          }
+          WEAR_EOF
+          cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/WearApp.kt <<'WEAR_EOF'
+          package com.zailinn.c001apk.wear
+          
+          import android.net.Uri
+          import androidx.compose.runtime.Composable
+          import androidx.compose.runtime.LaunchedEffect
+          import androidx.compose.runtime.getValue
+          import androidx.compose.runtime.mutableStateOf
+          import androidx.compose.runtime.remember
+          import androidx.compose.runtime.setValue
+          import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+          import androidx.wear.compose.material3.AppScaffold
+          import androidx.wear.compose.material3.MaterialTheme
+          import androidx.wear.compose.navigation.SwipeDismissableNavHost
+          import androidx.wear.compose.navigation.composable
+          import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
+          import com.zailinn.c001apk.core.model.Datum
+          
+          /** Values that screens hand to the next one; kept out of route strings so any text is safe. */
+          private class NavArgs {
+              val feeds = HashMap<String, Datum>()
+              val targets = HashMap<String, WearTarget>()
+              val categories = HashMap<String, Datum>()
+              val threads = HashMap<String, Datum>()
+              var targetIndex: Int = 0
+              var categoryIndex: Int = 0
+              var threadIndex: Int = 0
+              var keyword: String = ""
+              var images: List<String> = emptyList()
+              var imageIndex: Int = 0
+          }
+          
+          /** Resolve the same /t/<tag> and /product/<id> links used by the phone app. */
+          private fun targetFrom(item: Datum): WearTarget? {
+              val url = item.url.orEmpty()
+              return when {
+                  "/t/" in url -> url.substringAfter("/t/").substringBefore('?').substringBefore('#')
+                      .takeIf { it.isNotBlank() }?.let { WearTarget(tag = Uri.decode(it)) }
+                  "/product/" in url -> url.substringAfter("/product/").substringBefore('?').substringBefore('#').substringBefore('/')
+                      .takeIf { it.isNotBlank() }?.let { WearTarget(id = Uri.decode(it)) }
+                  item.entityType == "topic" -> item.title?.takeIf { it.isNotBlank() }?.let { WearTarget(tag = it) }
+                  item.entityType == "product" -> (item.id ?: item.entityId)?.takeIf { it.isNotBlank() }?.let { WearTarget(id = it) }
+                  else -> null
+              }
+          }
+          
+          @Composable
+          fun WearApp(container: WearContainer) {
+              MaterialTheme {
+                  AppScaffold {
+                      val navController = rememberSwipeDismissableNavController()
+                      val args = remember { NavArgs() }
+          
+                      // Kept above the navigation host so going back does not reload or lose the scroll position.
+                      val homeFeed = remember {
+                          PagedFeed { page -> container.repository.homeFeed(page, 1, container.installTime) }
+                      }
+                      val homeList = rememberScalingLazyListState()
+                      var results by remember { mutableStateOf<PagedFeed?>(null) }
+                      val resultsList = rememberScalingLazyListState()
+          
+                      // A new account sees its own home feed.
+                      LaunchedEffect(container.accountVersion) {
+                          if (container.accountVersion > 0) homeFeed.reset()
+                      }
+          
+                      fun openFeed(feed: Datum) {
+                          val id = feed.id ?: feed.entityId ?: return
+                          args.feeds[id] = feed
+                          navController.navigate("feed/$id")
+                      }
+          
+                      fun openImages(urls: List<String>, index: Int) {
+                          args.images = urls
+                          args.imageIndex = index
+                          navController.navigate("images")
+                      }
+          
+                      fun openTarget(item: Datum) {
+                          val target = targetFrom(item) ?: return
+                          val key = "target-${++args.targetIndex}"
+                          args.targets[key] = target
+                          navController.navigate("target/$key")
+                      }
+          
+                      fun openCategory(item: Datum) {
+                          val key = "category-${++args.categoryIndex}"
+                          args.categories[key] = item
+                          navController.navigate("category/$key")
+                      }
+          
+                      fun openThread(reply: Datum) {
+                          val key = "thread-${++args.threadIndex}"
+                          args.threads[key] = reply
+                          navController.navigate("thread/$key")
+                      }
+          
+                      SwipeDismissableNavHost(navController = navController, startDestination = "home") {
+                          composable("home") {
+                              ChannelHubScreen(
+                                  container = container,
+                                  onOpenFeed = ::openFeed,
+                                  onOpenUser = { uid -> navController.navigate("user/$uid") },
+                                  onOpenTarget = ::openTarget,
+                                  onOpenCategory = ::openCategory,
+                                  onMe = { navController.navigate("me") },
+                              )
+                          }
+                          composable("search") {
+                              SearchScreen(container) { keyword ->
+                                  container.addHistory(keyword)
+                                  args.keyword = keyword
+                                  results = PagedFeed { page ->
+                                      container.repository.search("feed", "all", "default", keyword, 0, null, null, page)
+                                  }
+                                  navController.navigate("results")
+                              }
+                          }
+                          composable("results") {
+                              results?.let {
+                                  ResultsScreen(
+                                      keyword = args.keyword,
+                                      feed = it,
+                                      listState = resultsList,
+                                      onOpenFeed = ::openFeed,
+                                      onOpenUser = { uid -> navController.navigate("user/$uid") },
+                                      onOpenTarget = ::openTarget,
+                                  )
+                              }
+                          }
+                          composable("feed/{id}") { entry ->
+                              val id = entry.arguments?.getString("id").orEmpty()
+                              args.feeds[id]?.let { initial ->
+                                  DetailScreen(
+                                      container = container,
+                                      initial = initial,
+                                      onUser = { uid -> navController.navigate("user/$uid") },
+                                      onTarget = ::openTarget,
+                                      onImages = ::openImages,
+                                      onOpenThread = ::openThread,
+                                  )
+                              }
+                          }
+                          composable("user/{uid}") { entry ->
+                              val uid = entry.arguments?.getString("uid").orEmpty()
+                              UserScreen(
+                                  container = container,
+                                  uid = uid,
+                                  onOpenFeed = ::openFeed,
+                                  onOpenUser = { userId -> if (userId != uid) navController.navigate("user/$userId") },
+                                  onOpenTarget = ::openTarget,
+                                  onImages = ::openImages,
+                              )
+                          }
+                          composable("target/{key}") { entry ->
+                              val key = entry.arguments?.getString("key").orEmpty()
+                              args.targets[key]?.let { target ->
+                                  TargetScreen(
+                                      container = container,
+                                      target = target,
+                                      onOpenFeed = ::openFeed,
+                                      onOpenUser = { uid -> navController.navigate("user/$uid") },
+                                      onOpenTarget = ::openTarget,
+                                  )
+                              }
+                          }
+                          composable("category/{key}") { entry ->
+                              val key = entry.arguments?.getString("key").orEmpty()
+                              args.categories[key]?.let { category ->
+                                  CategoryFeedScreen(
+                                      container = container,
+                                      category = category,
+                                      onOpenFeed = ::openFeed,
+                                      onOpenUser = { uid -> navController.navigate("user/$uid") },
+                                      onOpenTarget = ::openTarget,
+                                  )
+                              }
+                          }
+                          composable("thread/{key}") { entry ->
+                              val key = entry.arguments?.getString("key").orEmpty()
+                              args.threads[key]?.let { reply ->
+                                  ReplyThreadScreen(
+                                      container = container,
+                                      origin = reply,
+                                      onUser = { uid -> navController.navigate("user/$uid") },
+                                  )
+                              }
+                          }
+                          composable("me") {
+                              MeScreen(
+                                  container = container,
+                                  onLogin = { navController.navigate("login") },
+                                  onProfile = { uid -> navController.navigate("user/$uid") },
+                                  onAbout = { navController.navigate("about") },
+                              )
+                          }
+                          composable("login") {
+                              LoginScreen(container) { navController.popBackStack() }
+                          }
+                          composable("images") {
+                              ImageViewerScreen(args.images, args.imageIndex, container)
+                          }
+                          composable("about") {
+                              AboutScreen()
+                          }
+                      }
+                  }
+              }
+          }
+          WEAR_EOF
+          cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/WearApplication.kt <<'WEAR_EOF'
+          package com.zailinn.c001apk.wear
+          
+          import android.app.Application
+          import coil3.ImageLoader
+          import coil3.PlatformContext
+          import coil3.SingletonImageLoader
+          import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+          import coil3.request.crossfade
+          
+          class WearApplication : Application(), SingletonImageLoader.Factory {
+              lateinit var container: WearContainer
+                  private set
+          
+              override fun onCreate() {
+                  super.onCreate()
+                  container = WearContainer(this)
+              }
+          
+              override fun newImageLoader(context: PlatformContext): ImageLoader = ImageLoader.Builder(context)
+                  .components {
+                      add(OkHttpNetworkFetcherFactory(callFactory = { container.imageHttp }))
+                  }
+                  // Pictures fade in instead of popping in.
+                  .crossfade(true)
+                  .build()
+          }
+          WEAR_EOF
+          cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/WearContainer.kt <<'WEAR_EOF'
+          package com.zailinn.c001apk.wear
+          
+          import android.content.Context
+          import androidx.compose.runtime.getValue
+          import androidx.compose.runtime.mutableIntStateOf
+          import androidx.compose.runtime.mutableStateOf
+          import androidx.compose.runtime.setValue
+          import com.zailinn.c001apk.core.net.AccountCredentials
+          import com.zailinn.c001apk.core.net.ApiFailure
+          import com.zailinn.c001apk.core.net.CoolapkClient
+          import com.zailinn.c001apk.core.net.CoolapkHeaders
+          import com.zailinn.c001apk.core.net.CoolapkRepository
+          import com.zailinn.c001apk.core.net.SessionState
+          import com.zailinn.c001apk.core.net.readApiObject
+          import com.zailinn.c001apk.core.protocol.ProtocolParams
+          import kotlinx.coroutines.CancellationException
+          import kotlinx.serialization.json.JsonObject
+          import kotlinx.serialization.json.JsonPrimitive
+          import okhttp3.OkHttpClient
+          
+          /** Everything the watch app shares: the phone app's network layer, a guest or Cookie account, and search history. */
+          class WearContainer(context: Context) {
+              private val prefs = context.getSharedPreferences("wear", Context.MODE_PRIVATE)
+              private val protocol: ProtocolParams = loadProtocol()
+          
+              val installTime: String = prefs.getString("installTime", null)
+                  ?: System.currentTimeMillis().toString().also { prefs.edit().putString("installTime", it).apply() }
+          
+              val session = SessionState()
+              private val baseHttp = OkHttpClient()
+          
+              /** Images only get the client user agent, never API credentials. */
+              val imageHttp: OkHttpClient = baseHttp.newBuilder()
+                  .addInterceptor { chain ->
+                      chain.proceed(chain.request().newBuilder().header("User-Agent", protocol.userAgent).build())
+                  }
+                  .build()
+          
+              val client = CoolapkClient(session, CoolapkHeaders(session, { protocol }), baseHttp)
+              val repository = CoolapkRepository(client)
+          
+              /** The signed-in account, or null for guest mode. */
+              var account by mutableStateOf<AccountCredentials?>(null)
+                  private set
+          
+              /** Bumped on every login or logout, so account-bound lists reload. */
+              var accountVersion by mutableIntStateOf(0)
+                  private set
+          
+              var history by mutableStateOf(readHistory())
+                  private set
+          
+              init {
+                  val uid = prefs.getString("acc_uid", null)
+                  val name = prefs.getString("acc_name", null)
+                  val token = prefs.getString("acc_token", null)
+                  if (uid != null && name != null && token != null) {
+                      val saved = AccountCredentials(uid, name, token)
+                      account = saved
+                      session.activate(saved, notify = false)
+                  }
+              }
+          
+              /** Checks the pasted Cookie with the server first, like the phone app. Returns an error message, or null on success. */
+              suspend fun loginWithCookie(text: String): String? {
+                  val pasted = AccountCredentials.parseCookie(text) ?: return "Cookie 缺少有效的 uid、username 或 token"
+                  try {
+                      val data = readApiObject(repository.checkLoginInfo(pasted))["data"] as? JsonObject
+                          ?: return "Cookie 无效或已过期"
+                      val uid = (data["uid"] as? JsonPrimitive)?.content
+                      if (uid != pasted.uid) return "Cookie 无效或已过期"
+                      // The server may hand out a refreshed token.
+                      val token = (data["token"] as? JsonPrimitive)?.content?.takeIf { it.isNotEmpty() } ?: pasted.token
+                      val saved = pasted.copy(token = token)
+                      prefs.edit()
+                          .putString("acc_uid", saved.uid)
+                          .putString("acc_name", saved.username)
+                          .putString("acc_token", saved.token)
+                          .apply()
+                      session.activate(saved, notify = true)
+                      account = saved
+                      accountVersion++
+                      return null
+                  } catch (e: CancellationException) {
+                      throw e
+                  } catch (e: Exception) {
+                      return ApiFailure.from(e).message
+                  }
+              }
+          
+              fun logout() {
+                  prefs.edit().remove("acc_uid").remove("acc_name").remove("acc_token").apply()
+                  session.activate(null, notify = true)
+                  account = null
+                  accountVersion++
+              }
+          
+              fun addHistory(keyword: String) {
+                  val clean = keyword.trim()
+                  if (clean.isEmpty()) return
+                  history = (listOf(clean) + history.filter { it != clean }).take(6)
+                  prefs.edit().putString("history", history.joinToString("\n")).apply()
+              }
+          
+              suspend fun saveImage(context: Context, url: String): Result<Unit> = saveWatchImage(context, imageHttp, url)
+          
+              fun clearHistory() {
+                  history = emptyList()
+                  prefs.edit().remove("history").apply()
+              }
+          
+              private fun readHistory(): List<String> =
+                  prefs.getString("history", null)?.split("\n")?.filter { it.isNotBlank() }.orEmpty()
+          
+              private fun loadProtocol(): ProtocolParams {
+                  val device = prefs.getString("xAppDevice", null)
+                  if (device != null) {
+                      return ProtocolParams(
+                          manufacturer = prefs.getString("manufacturer", "").orEmpty(),
+                          brand = prefs.getString("brand", "").orEmpty(),
+                          model = prefs.getString("model", "").orEmpty(),
+                          buildNumber = prefs.getString("buildNumber", "").orEmpty(),
+                          sdkInt = prefs.getString("sdkInt", "").orEmpty(),
+                          androidVersion = prefs.getString("androidVersion", "").orEmpty(),
+                          userAgent = prefs.getString("userAgent", "").orEmpty(),
+                          xAppDevice = device,
+                      )
+                  }
+                  val fresh = ProtocolParams.generate()
+                  prefs.edit()
+                      .putString("manufacturer", fresh.manufacturer)
+                      .putString("brand", fresh.brand)
+                      .putString("model", fresh.model)
+                      .putString("buildNumber", fresh.buildNumber)
+                      .putString("sdkInt", fresh.sdkInt)
+                      .putString("androidVersion", fresh.androidVersion)
+                      .putString("userAgent", fresh.userAgent)
+                      .putString("xAppDevice", fresh.xAppDevice)
+                      .apply()
+                  return fresh
+              }
+          }
+          WEAR_EOF
+          cat > wear/src/main/res/drawable/ic_launcher.xml <<'WEAR_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="48dp"
+              android:height="48dp"
+              android:viewportWidth="48"
+              android:viewportHeight="48">
+              <path
+                  android:fillColor="#2EC27E"
+                  android:pathData="M24,24m-22,0a22,22 0,1 1,44 0a22,22 0,1 1,-44 0" />
+              <path
+                  android:fillColor="#FFFFFF"
+                  android:pathData="M24,24m-9,0a9,9 0,1 1,18 0a9,9 0,1 1,-18 0" />
+          </vector>
+          WEAR_EOF
+          cat > wear/src/main/res/xml/network_security_config.xml <<'WEAR_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <network-security-config>
+              <base-config cleartextTrafficPermitted="true">
+                  <trust-anchors>
+                      <certificates src="system" />
+                      <certificates src="user" />
+                  </trust-anchors>
+              </base-config>
+          </network-security-config>
+          WEAR_EOF
 
-      - name: Make gradlew executable
-        run: chmod +x gradlew
+      - name: Verify Wear module is included
+        run: |
+          set -euo pipefail
+          grep -q 'include(":wear")' settings.gradle.kts
+          test -f wear/src/main/AndroidManifest.xml
+          test -f wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
+          test -f wear/src/main/kotlin/com/zailinn/c001apk/wear/ImageSaver.kt
 
-      - name: Build Wear debug APK
-        run: ./gradlew :wear:assembleDebug --stacktrace --console=plain
+      - name: Build Wear release APK
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :wear:assembleRelease --no-daemon --stacktrace
 
-      # Faster, smaller build. If it fails, the debug APK above is still delivered.
-      - name: Build Wear optimized APK
-        continue-on-error: true
-        run: ./gradlew :wear:assembleRelease --stacktrace --console=plain
+      - name: Check APK output
+        run: |
+          set -euo pipefail
+          ls -lh wear/build/outputs/apk/release/
+          test -f wear/build/outputs/apk/release/wear-release.apk
 
-      - name: Upload APKs
+      - name: Upload Wear APK
         uses: actions/upload-artifact@v4
         with:
-          name: wear-apk
-          path: wear/build/outputs/apk/**/*.apk
+          name: Coolapk-WearOS-6-GalaxyWatch7
+          path: wear/build/outputs/apk/release/wear-release.apk
           if-no-files-found: error
