@@ -1,9 +1,9 @@
-# 酷安 Wear OS 0.6.8 / Galaxy Watch7 32-bit ARMv7 持久返回位置、性能与动效优化版自动编译工作流
+# 酷安 Wear OS 0.6.10 / Galaxy Watch7 32-bit ARMv7 持久返回位置、性能与动效优化版自动编译工作流
 # 使用：将本文件放到 .github/workflows/wear-apk.yml 并提交到 main。
 # 从你 Fork 仓库当前提交构建，保留 :core 网络层；手表端单独适配圆屏 UI。
 
-name: Build Coolapk Wear OS v0.6.9 - Return-State Fix - ARMv7 - Galaxy Watch7
-run-name: Wear OS 0.6.8 持久返回位置、轻量毛玻璃、流畅动效、性能优化、Wear OS 6/7、32 位 ARMv7
+name: Build Coolapk Wear OS v0.6.10 - Native Back Restoration - ARMv7 - Galaxy Watch7
+run-name: Wear OS 0.6.10 原生返回状态保留、轻量毛玻璃、流畅动效、性能优化、Wear OS 6/7、32 位 ARMv7
 
 on:
   push:
@@ -5885,7 +5885,106 @@ jobs:
           python3 -m py_compile /tmp/patch_wear_069_return.py
           python3 /tmp/patch_wear_069_return.py
 
-      - name: Verify Wear OS 0.6.9 durable navigation, network recovery, glass UI and ARMv7 ABI
+      - name: Apply Wear OS 0.6.10 native back-stack state preservation fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/patch_wear_0610_navigation.py <<'PY'
+          from pathlib import Path
+
+          PKG = Path('wear/src/main/kotlin/com/zailinn/c001apk/wear')
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f'{label}: expected exactly one match, found {count}')
+              return text.replace(old, new, 1)
+
+          # Do not force a second restoration when the existing NavHost returns to Home.
+          # PagerState/ListState are already owned above NavHost and therefore survive a normal
+          # push/pop. SharedPreferences restoration is still performed when the Home content is
+          # genuinely recreated; a back press must not overwrite live Compose state with a snapshot.
+          p = PKG / 'WearApp.kt'
+          s = p.read_text()
+          start = s.index('                val currentEntry by navController.currentBackStackEntryAsState()')
+          end = s.index('                val args = remember { NavArgs() }', start)
+          old_block = s[start:end]
+          if 'requestHomeRestore()' not in old_block or 'previousRoute' not in old_block:
+              raise RuntimeError('WearApp: expected 0.6.9 return-event observer was not found')
+          new_block = '''                val currentEntry by navController.currentBackStackEntryAsState()
+                          LaunchedEffect(currentEntry?.destination?.route) {
+                              if (currentEntry?.destination?.route == "home" && container.getBool("refresh_on_return", false)) {
+                                  container.requestHomeRefresh()
+                              }
+                          }
+          '''
+          s = s[:start] + new_block + s[end:]
+          p.write_text(s)
+
+          p = PKG / 'WearContainer.kt'
+          s = p.read_text()
+          s = replace_once(
+              s,
+              '    var homeReturnRevision by mutableIntStateOf(0)\n        private set\n',
+              '',
+              'Remove custom home-return revision',
+          )
+          s = replace_once(
+              s,
+              '    fun requestHomeRestore() { homeReturnRevision++ }\n',
+              '',
+              'Remove custom home-return trigger',
+          )
+          p.write_text(s)
+
+          p = PKG / 'ChannelScreens.kt'
+          s = p.read_text()
+          s = replace_once(
+              s,
+              '    val homeReturnRevision = container.homeReturnRevision\n',
+              '',
+              'Remove forced restore event from channel screen',
+          )
+          s = replace_once(
+              s,
+              'LaunchedEffect(feed, refreshRevision, homeReturnRevision, durableFeedKey)',
+              'LaunchedEffect(feed, refreshRevision, durableFeedKey)',
+              'Restore only when feed or its real refresh lifecycle changes',
+          )
+          p.write_text(s)
+
+          # Advance the displayed and package version for this regression-fix iteration.
+          p = PKG / 'MoreScreens.kt'
+          s = p.read_text()
+          s = s.replace('const val WEAR_VERSION_NAME = "0.6.9"', 'const val WEAR_VERSION_NAME = "0.6.10"')
+          s = s.replace('"酷安 Wear OS 版 0.6.9"', '"酷安 Wear OS 版 0.6.10"')
+          p.write_text(s)
+
+          p = Path('wear/build.gradle.kts')
+          s = p.read_text()
+          s = replace_once(s, 'versionCode = 2026103114', 'versionCode = 2026103115', 'Wear versionCode')
+          s = replace_once(s, 'versionName = "0.6.9"', 'versionName = "0.6.10"', 'Wear versionName')
+          p.write_text(s)
+
+          app = (PKG / 'WearApp.kt').read_text()
+          channel = (PKG / 'ChannelScreens.kt').read_text()
+          container = (PKG / 'WearContainer.kt').read_text()
+          assert 'navController.popBackStack()' in app
+          assert 'requestHomeRefresh()' in app
+          assert 'requestHomeRestore' not in app and 'previousRoute' not in app
+          assert 'homeReturnRevision' not in container and 'homeReturnRevision' not in channel
+          assert 'LaunchedEffect(feed, refreshRevision, durableFeedKey)' in channel
+          assert 'val positionToRestore = container.getChannelScrollPosition(durableFeedKey)' in channel
+          assert 'saveNavigationInt("last_channel_page", page, flush = true)' in app
+          assert 'channelPagerState.settledPage, flush = true' in app
+          build = Path('wear/build.gradle.kts').read_text()
+          assert 'versionName = "0.6.10"' in build and 'versionCode = 2026103115' in build
+          print('0.6.10 native back-stack preservation and cold-recreation-only state restore checks passed')
+          PY
+          python3 -m py_compile /tmp/patch_wear_0610_navigation.py
+          python3 /tmp/patch_wear_0610_navigation.py
+
+      - name: Verify Wear OS 0.6.10 durable navigation, network recovery, glass UI and ARMv7 ABI
         shell: bash
         run: |
           set -euo pipefail
@@ -5898,8 +5997,8 @@ jobs:
           test -s wear/build.gradle.kts
           grep -q '":wear"' settings.gradle.kts
           grep -q 'https://maven.mozilla.org/maven2/' settings.gradle.kts
-          grep -q 'versionCode = 2026103114' wear/build.gradle.kts
-          grep -q 'versionName = "0.6.9"' wear/build.gradle.kts
+          grep -q 'versionCode = 2026103115' wear/build.gradle.kts
+          grep -q 'versionName = "0.6.10"' wear/build.gradle.kts
           grep -q 'targetSdk = 37' wear/build.gradle.kts
           grep -q 'minorApiLevel = 2' wear/build.gradle.kts
           grep -q 'version = release(37)' wear/build.gradle.kts
@@ -5915,7 +6014,7 @@ jobs:
           grep -q 'retryOnConnectionFailure(true)' "$W/WearContainer.kt"
           grep -q 'awaitNetwork()' "$W/PagedFeed.kt"
           grep -q 'getNavigationInt("last_channel_page"' "$W/WearApp.kt"
-          grep -q 'saveNavigationInt("last_channel_page", page)' "$W/WearApp.kt"
+          grep -q 'saveNavigationInt("last_channel_page", page, flush = true)' "$W/WearApp.kt"
           if grep -q 'LaunchedEffect(configuredHome)' "$W/WearApp.kt"; then echo 'Old forced-home reset regression detected' >&2; exit 1; fi
           grep -q 'getChannelLoadedPages(durableFeedKey)' "$W/ChannelScreens.kt"
           grep -q 'state.scrollToItem(restoreIndex, positionToRestore.second)' "$W/ChannelScreens.kt"
@@ -5959,9 +6058,8 @@ jobs:
           grep -q 'pagerState: PagerState' "$W/ChannelScreens.kt"
           grep -q 'MenuButton("← 返回设置"' "$W/MoreScreens.kt"
           grep -q 'onBack = { navController.popBackStack() }' "$W/WearApp.kt"
-          grep -q 'requestHomeRestore()' "$W/WearApp.kt"
-          grep -q 'homeReturnRevision' "$W/WearContainer.kt"
-          grep -q 'LaunchedEffect(feed, refreshRevision, homeReturnRevision, durableFeedKey)' "$W/ChannelScreens.kt"
+          if grep -q 'requestHomeRestore\|homeReturnRevision\|previousRoute' "$W/WearApp.kt" "$W/WearContainer.kt" "$W/ChannelScreens.kt"; then echo 'Custom home-return override must stay disabled; native NavHost state is retained.' >&2; exit 1; fi
+          grep -q 'LaunchedEffect(feed, refreshRevision, durableFeedKey)' "$W/ChannelScreens.kt"
           grep -q 'val positionToRestore = container.getChannelScrollPosition(durableFeedKey)' "$W/ChannelScreens.kt"
           if grep -q 'savedPosition = remember(durableFeedKey)' "$W/ChannelScreens.kt"; then echo 'Stale remembered viewport snapshot remains.' >&2; exit 1; fi
           grep -q 'flush = true' "$W/ChannelScreens.kt"
@@ -5979,7 +6077,7 @@ jobs:
           grep -q 'pending.acceptValidate(validate)' "$W/WearCaptchaBrowser.kt"
           grep -q 'fun acceptValidate(validate: String?)' "$W/WearCaptchaCoordinator.kt"
           grep -q 'c001apk-wear://captcha?cid=' "$W/WearCaptchaBrowser.kt"
-          grep -q 'WEAR_VERSION_NAME = "0.6.9"' "$W/MoreScreens.kt"
+          grep -q 'WEAR_VERSION_NAME = "0.6.10"' "$W/MoreScreens.kt"
           grep -q '内置浏览验证' "$W/MoreScreens.kt"
           grep -q 'feedReplies(id, listType, page, fromAuthor)' "$W/DetailScreens.kt"
           grep -q 'subRepliesVerified(origin.id.orEmpty(), page)' "$W/DetailScreens.kt"
@@ -6038,7 +6136,7 @@ jobs:
           assert 'awaitNetwork()' in paged and 'result = load(requestPage)' in paged
           assert 'val successfulPages: Int get()' in paged
           assert 'getNavigationInt("last_channel_page"' in app
-          assert 'saveNavigationInt("last_channel_page", page)' in app
+          assert 'saveNavigationInt("last_channel_page", page, flush = true)' in app
           assert 'snapshotFlow { channelPagerState.settledPage }' in app
           assert 'LaunchedEffect(configuredHome)' not in app
           assert 'pending_home_channel' in app and 'pending_home_channel' in (base / 'kotlin/com/zailinn/c001apk/wear/MoreScreens.kt').read_text()
@@ -6082,7 +6180,7 @@ jobs:
           print(f'Validated 8-entry single navigation rail, on-watch WebView/GeckoView proof callback, manifest and {len(kotlin)} Kotlin files; ABI filter is armeabi-v7a only.')
           PY
           python3 -m py_compile /tmp/patch_wear_064.py /tmp/patch_wear_066.py /tmp/patch_wear_067_network.py /tmp/patch_wear_068_navigation.py /tmp/patch_wear_069_return.py
-          echo 'Wear OS 0.6.9 persistent navigation, list restore, glass UI, bounded network recovery, Wear OS 6/7 and ARMv7-only checks passed.'
+          echo 'Wear OS 0.6.10 native back-stack preservation, list restore, glass UI, bounded network recovery, Wear OS 6/7 and ARMv7-only checks passed.'
           python3 - <<'PY'
           from pathlib import Path
           app = Path('wear/src/main/kotlin/com/zailinn/c001apk/wear/WearApp.kt').read_text()
@@ -6115,30 +6213,30 @@ jobs:
           print('Persistent navigation, partial-failure-safe page count, 40-page horizon and anchor restoration checks passed.')
           PY
 
-      - name: Kotlin compile preflight - Wear OS 0.6.9
+      - name: Kotlin compile preflight - Wear OS 0.6.10
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./gradlew
           ./gradlew :wear:compileReleaseKotlin --no-daemon --stacktrace --console=plain
 
-      - name: Build Wear OS 0.6.9 32-bit ARMv7 release APK
+      - name: Build Wear OS 0.6.10 32-bit ARMv7 release APK
         shell: bash
         run: |
           set -euo pipefail
           ./gradlew :wear:assembleRelease --no-daemon --stacktrace --console=plain
 
-      - name: Verify APK 0.6.9 output and native ABI
+      - name: Verify APK 0.6.10 output and native ABI
         run: |
           set -euo pipefail
           ls -lh wear/build/outputs/apk/release/
           test -s wear/build/outputs/apk/release/wear-release.apk
           mkdir -p dist
-          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.9-ReturnRestore-ARMv7-GalaxyWatch7.apk
-          sha256sum dist/Coolapk-WearOS-v0.6.9-ReturnRestore-ARMv7-GalaxyWatch7.apk > dist/SHA256SUMS.txt
+          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.10-NativeBack-ARMv7-GalaxyWatch7.apk
+          sha256sum dist/Coolapk-WearOS-v0.6.10-NativeBack-ARMv7-GalaxyWatch7.apk > dist/SHA256SUMS.txt
           python3 - <<'PY'
           import zipfile
-          apk = 'dist/Coolapk-WearOS-v0.6.9-ReturnRestore-ARMv7-GalaxyWatch7.apk'
+          apk = 'dist/Coolapk-WearOS-v0.6.10-NativeBack-ARMv7-GalaxyWatch7.apk'
           with zipfile.ZipFile(apk) as z:
               abis = sorted({n.split('/')[1] for n in z.namelist() if n.startswith('lib/') and len(n.split('/')) > 2})
           print('APK native ABI folders:', abis)
@@ -6150,12 +6248,12 @@ jobs:
               f.write('required=armeabi-v7a\n')
               f.write('64bit_or_x86=none\n')
           PY
-          printf 'versionName=0.6.9\nversionCode=2026103114\ntargetSdk=37\ncompileSdk=37.2 (minorApiLevel=2)\nbuildTools=37.0.0\nabi=armeabi-v7a-only\nwearOs=6-and-7\nminSdk=30\nnetworkRecovery=validated-route-callback+single-retry\nrequestTimeout=30s\nnavigationPersistence=home-return-event+fresh-prefs-read+sync-checkpoint+reload-pages\nwebview=system-first\ngeckoview=159.0.20261022150525-armeabi-v7a\n' > dist/BUILD_INFO.txt
+          printf 'versionName=0.6.10\nversionCode=2026103115\ntargetSdk=37\ncompileSdk=37.2 (minorApiLevel=2)\nbuildTools=37.0.0\nabi=armeabi-v7a-only\nwearOs=6-and-7\nminSdk=30\nnetworkRecovery=validated-route-callback+single-retry\nrequestTimeout=30s\nnavigationPersistence=parent-owned-pager+list-state+sync-checkpoint+cold-recreation-restore\nwebview=system-first\ngeckoview=159.0.20261022150525-armeabi-v7a\n' > dist/BUILD_INFO.txt
           printf 'source=%s\ncommit=%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> dist/BUILD_INFO.txt
 
       - name: Upload Wear APK
         uses: actions/upload-artifact@v7
         with:
-          name: Coolapk-WearOS-v0.6.9-ReturnRestore-ARMv7-GalaxyWatch7
+          name: Coolapk-WearOS-v0.6.10-NativeBack-ARMv7-GalaxyWatch7
           path: dist/
           if-no-files-found: error
