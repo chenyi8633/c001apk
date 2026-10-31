@@ -1,9 +1,9 @@
-# 酷安 Wear OS 0.6.2 / Galaxy Watch7 手表独立评论验证版自动编译工作流
+# 酷安 Wear OS 0.6.3 / Galaxy Watch7 Modifier 导入修复版自动编译工作流
 # 使用：上传到 .github/workflows/wear-apk.yml 后提交到 main。
 # 从你 Fork 仓库当前提交构建，保留 :core 网络层；手表端单独适配圆屏 UI。
 
-name: Build Coolapk Wear OS v0.6.2 - Watch-only Comments - Galaxy Watch7
-run-name: Wear OS 0.6.2 手表独立评论验证与重复函数修复构建
+name: Build Coolapk Wear OS v0.6.3 - Modifier Import Fix - Galaxy Watch7
+run-name: Wear OS 0.6.3 修复 WearApp Modifier 导入并编译手表独立版
 
 on:
   push:
@@ -2350,6 +2350,7 @@ jobs:
           package com.zailinn.c001apk.wear
           
           import android.net.Uri
+          import androidx.compose.ui.Modifier
           import androidx.compose.runtime.Composable
           import androidx.compose.foundation.isSystemInDarkTheme
           import androidx.compose.ui.graphics.Color
@@ -3450,7 +3451,7 @@ jobs:
           </network-security-config>
           WEAR_EOF
 
-          # Apply clean 0.6.2 fixes after generating the module. This removes the old
+          # Apply clean 0.6.3 fixes after generating the module. This removes the old
           # duplicate input field, wires the Core captcha verifier to the watch browser,
           # registers the local FileProvider/deep link, and removes phone-only actions.
           cat > /tmp/patch_wear_062.py <<'PATCH_EOF'
@@ -4025,7 +4026,7 @@ jobs:
           if start >= 0 and end > start:
               s = s[:start] + s[end:]
           s = s.replace('openCoolapkPost(context, parentId)', 'openCoolapkPostOnWatch(context, parentId)')
-          s = s.replace('const val WEAR_VERSION_NAME = "0.6.1"', 'const val WEAR_VERSION_NAME = "0.6.2"')
+          s = s.replace('const val WEAR_VERSION_NAME = "0.6.1"', 'const val WEAR_VERSION_NAME = "0.6.3"')
           more.write_text(s)
           
           # 10) Version bump in build config and remove phone remote-interaction dependency.
@@ -4035,15 +4036,15 @@ jobs:
           # Find the wear module build file reliably.
           wbuild = root.parents[1] / 'build.gradle.kts'
           bs = wbuild.read_text()
-          bs = bs.replace('versionCode = 2026103105', 'versionCode = 2026103106').replace('versionName = "0.6.1"', 'versionName = "0.6.2"')
+          bs = bs.replace('versionCode = 2026103105', 'versionCode = 2026103107').replace('versionName = "0.6.1"', 'versionName = "0.6.3"')
           bs = re.sub(r'^\s*implementation\("androidx\.wear:wear-remote-interactions:1\.2\.0"\)\s*\n', '', bs, flags=re.M)
           wbuild.write_text(bs)
           
-          print('0.6.2 post-generation patches applied')
+          print('0.6.3 post-generation patches applied')
           PATCH_EOF
           python3 /tmp/patch_wear_062.py
 
-      - name: Verify Wear 0.6.2 standalone source and captcha flow
+      - name: Verify Wear 0.6.3 standalone source, Modifier import and captcha flow
         shell: bash
         run: |
           set -euo pipefail
@@ -4052,12 +4053,13 @@ jobs:
           test -s "$REPO"
           test -s wear/build.gradle.kts
           grep -q '":wear"' settings.gradle.kts
-          grep -q 'versionCode = 2026103106' wear/build.gradle.kts
-          grep -q 'versionName = "0.6.2"' wear/build.gradle.kts
+          grep -q 'versionCode = 2026103107' wear/build.gradle.kts
+          grep -q 'versionName = "0.6.3"' wear/build.gradle.kts
           test -s "$W/WearCaptchaCoordinator.kt"
           test -s "$W/WearCaptchaBrowser.kt"
           test -s wear/src/main/res/xml/captcha_file_paths.xml
           test -s "$W/MainActivity.kt"
+          grep -q '^import androidx.compose.ui.Modifier$' "$W/WearApp.kt"
           test "$(grep -Fc 'fun WatchTextField(' "$W/Components.kt")" -eq 1
           grep -q 'TextFieldValue' "$W/Components.kt"
           grep -q 'client.captchaVerifier = captcha::verify' "$W/WearContainer.kt"
@@ -4097,30 +4099,33 @@ jobs:
           assert len(kotlin) >= 16, len(kotlin)
           components = (base / 'kotlin/com/zailinn/c001apk/wear/Components.kt').read_text()
           assert components.count('fun WatchTextField(') == 1
-          print(f'Validated manifest, FileProvider, captcha deep link and {len(kotlin)} Kotlin files.')
+          wear_app = (base / 'kotlin/com/zailinn/c001apk/wear/WearApp.kt').read_text()
+          assert 'import androidx.compose.ui.Modifier' in wear_app
+          assert wear_app.count('Modifier.fillMaxSize()') >= 2
+          print(f'Validated manifest, FileProvider, captcha deep link, Modifier import and {len(kotlin)} Kotlin files.')
           PY
           python3 -m py_compile /tmp/patch_wear_062.py
-          echo 'Wear OS 0.6.2 source checks passed.'
+          echo 'Wear OS 0.6.3 source checks passed.'
 
-      - name: Build Wear OS 0.6.2 release APK
+      - name: Build Wear OS 0.6.3 release APK
         run: |
           chmod +x ./gradlew
           ./gradlew :wear:assembleRelease --no-daemon --stacktrace
 
-      - name: Verify APK 0.6.2 output
+      - name: Verify APK 0.6.3 output
         run: |
           set -euo pipefail
           ls -lh wear/build/outputs/apk/release/
           test -s wear/build/outputs/apk/release/wear-release.apk
           mkdir -p dist
-          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.2-WatchOnly-Comments-GalaxyWatch7.apk
-          sha256sum dist/Coolapk-WearOS-v0.6.2-WatchOnly-Comments-GalaxyWatch7.apk > dist/SHA256SUMS.txt
-          printf 'versionName=0.6.2\nversionCode=2026103106\ncompileSdk=37.0\nbuildTools=37.0.0\n' > dist/BUILD_INFO.txt
+          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.3-Modifier-Fix-GalaxyWatch7.apk
+          sha256sum dist/Coolapk-WearOS-v0.6.3-Modifier-Fix-GalaxyWatch7.apk > dist/SHA256SUMS.txt
+          printf 'versionName=0.6.3\nversionCode=2026103107\ncompileSdk=37.0\nbuildTools=37.0.0\n' > dist/BUILD_INFO.txt
           printf 'source=%s\ncommit=%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> dist/BUILD_INFO.txt
 
       - name: Upload Wear APK
         uses: actions/upload-artifact@v7
         with:
-          name: Coolapk-WearOS-v0.6.2-WatchOnly-Comments-GalaxyWatch7
+          name: Coolapk-WearOS-v0.6.3-Modifier-Fix-GalaxyWatch7
           path: dist/
           if-no-files-found: error
