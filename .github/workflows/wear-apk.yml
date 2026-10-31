@@ -1,9 +1,9 @@
-# 酷安 Wear OS 0.6.4 / Galaxy Watch7 32-bit ARMv7 内嵌验证码版自动编译工作流
+# 酷安 Wear OS 0.6.5 / Galaxy Watch7 32-bit ARMv7 内嵌验证码版自动编译工作流
 # 使用：将本文件放到 .github/workflows/wear-apk.yml 并提交到 main。
 # 从你 Fork 仓库当前提交构建，保留 :core 网络层；手表端单独适配圆屏 UI。
 
-name: Build Coolapk Wear OS v0.6.4 - ARMv7 - In-App CAPTCHA - Galaxy Watch7
-run-name: Wear OS 0.6.4 单排一级导航、内嵌验证码、32 位 ARMv7 独立版
+name: Build Coolapk Wear OS v0.6.5 - ARMv7 - In-App CAPTCHA - Galaxy Watch7
+run-name: Wear OS 0.6.5 单排一级导航、内嵌验证码、32 位 ARMv7 独立版
 
 on:
   push:
@@ -29,7 +29,7 @@ jobs:
         with:
           packages: 'platform-tools'
 
-      - name: Install Android 37.0 platform and Build Tools 37.0.0
+      - name: Install Android 37.2 platform and Build Tools 37.0.0
         shell: bash
         run: |
           set -euo pipefail
@@ -39,16 +39,12 @@ jobs:
             exit 1
           fi
           echo "Android SDK root: $SDK_ROOT"
-          sdkmanager --sdk_root="$SDK_ROOT" --install "platforms;android-37.0" "build-tools;37.0.0"
-          test -d "$SDK_ROOT/platforms/android-37.0"
+          # GeckoView 159 declares Android API 37.2 as its minimum compile platform.
+          sdkmanager --sdk_root="$SDK_ROOT" --install "platforms;android-37.2" "build-tools;37.0.0"
+          test -d "$SDK_ROOT/platforms/android-37.2"
           test -d "$SDK_ROOT/build-tools/37.0.0"
-          # Some AGP versions still look up compileSdk 37 as platforms/android-37.
-          # Provide the compatibility alias while keeping the real 37.0 package intact.
-          if [[ ! -e "$SDK_ROOT/platforms/android-37" ]]; then
-            ln -s android-37.0 "$SDK_ROOT/platforms/android-37"
-          fi
           echo "Installed Android SDK packages:"
-          sdkmanager --sdk_root="$SDK_ROOT" --list_installed | grep -E 'platforms;android-37|build-tools;37.0.0' || true
+          sdkmanager --sdk_root="$SDK_ROOT" --list_installed | grep -E 'platforms;android-37.2|build-tools;37.0.0' || true
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
@@ -78,7 +74,11 @@ jobs:
 
           android {
               namespace = "com.zailinn.c001apk.wear"
-              compileSdk = 37
+              compileSdk {
+                  version = release(37) {
+                      minorApiLevel = 2
+                  }
+              }
 
               defaultConfig {
                   applicationId = "com.zailinn.c001apk.wear"
@@ -3451,7 +3451,7 @@ jobs:
           </network-security-config>
           WEAR_EOF
 
-          # Apply clean 0.6.4 fixes after generating the module. This removes the old
+          # Apply clean 0.6.5 fixes after generating the module. This removes the old
           # duplicate input field, wires the Core captcha verifier to the watch browser,
           # registers the local FileProvider/deep link, and removes phone-only actions.
           cat > /tmp/patch_wear_062.py <<'PATCH_EOF'
@@ -4026,7 +4026,7 @@ jobs:
           if start >= 0 and end > start:
               s = s[:start] + s[end:]
           s = s.replace('openCoolapkPost(context, parentId)', 'openCoolapkPostOnWatch(context, parentId)')
-          s = s.replace('const val WEAR_VERSION_NAME = "0.6.1"', 'const val WEAR_VERSION_NAME = "0.6.4"')
+          s = s.replace('const val WEAR_VERSION_NAME = "0.6.1"', 'const val WEAR_VERSION_NAME = "0.6.5"')
           more.write_text(s)
           
           # 10) Version bump in build config and remove phone remote-interaction dependency.
@@ -4036,15 +4036,15 @@ jobs:
           # Find the wear module build file reliably.
           wbuild = root.parents[1] / 'build.gradle.kts'
           bs = wbuild.read_text()
-          bs = bs.replace('versionCode = 2026103105', 'versionCode = 2026103107').replace('versionName = "0.6.1"', 'versionName = "0.6.4"')
+          bs = bs.replace('versionCode = 2026103105', 'versionCode = 2026103107').replace('versionName = "0.6.1"', 'versionName = "0.6.5"')
           bs = re.sub(r'^\s*implementation\("androidx\.wear:wear-remote-interactions:1\.2\.0"\)\s*\n', '', bs, flags=re.M)
           wbuild.write_text(bs)
           
-          print('0.6.4 post-generation patches applied')
+          print('0.6.5 post-generation patches applied')
           PATCH_EOF
           python3 /tmp/patch_wear_062.py
 
-      - name: Apply Wear OS 0.6.4 navigation, embedded CAPTCHA and ARMv7 patches
+      - name: Apply Wear OS 0.6.5 navigation, embedded CAPTCHA and ARMv7 patches
         shell: bash
         run: |
           set -euo pipefail
@@ -4440,7 +4440,7 @@ jobs:
           # 4) Update settings/help text so it accurately describes embedded verification.
           more = PKG / 'MoreScreens.kt'
           s = more.read_text()
-          s = s.replace('const val WEAR_VERSION_NAME = "0.6.4"', 'const val WEAR_VERSION_NAME = "0.6.4"')
+          s = s.replace('const val WEAR_VERSION_NAME = "0.6.5"', 'const val WEAR_VERSION_NAME = "0.6.5"')
           s = s.replace('\"PRIVACY\" to (\"隐私\" to \"浏览历史、外部浏览器\")', '\"PRIVACY\" to (\"隐私\" to \"浏览历史、手表内置验证\")')
           s = s.replace('\"PRIVACY\" to (\"隐私\" to \"浏览历史、外部浏览器\")', '\"PRIVACY\" to (\"隐私\" to \"浏览历史、手表内置验证\")')
           s = s.replace('item { MenuButton("打开酷安网站", "评论验证和网页内容使用系统浏览器") { if (!openExternalUrl(context, "https://www.coolapk.com/")) message = "手表没有可用的外部浏览器" } }',
@@ -4473,10 +4473,10 @@ jobs:
           # 6) Lock the Wear APK to 32-bit ARM and bundle the matching GeckoView engine.
           wbuild = Path('wear/build.gradle.kts')
           bs = wbuild.read_text()
-          bs = bs.replace('versionCode = 2026103107', 'versionCode = 2026103108')
-          bs = bs.replace('versionName = "0.6.4"', 'versionName = "0.6.4"')
+          bs = bs.replace('versionCode = 2026103107', 'versionCode = 2026103109')
+          bs = bs.replace('versionName = "0.6.5"', 'versionName = "0.6.5"')
           if 'abiFilters.add("armeabi-v7a")' not in bs:
-              target = 'versionName = "0.6.4"'
+              target = 'versionName = "0.6.5"'
               if target not in bs:
                   raise SystemExit('Cannot locate Wear versionName for ABI filter insertion')
               bs = bs.replace(target, target + '\n                  ndk {\n                      abiFilters.add("armeabi-v7a")\n                  }', 1)
@@ -4489,11 +4489,11 @@ jobs:
           bs = re.sub(r'^\s*implementation\("androidx\.wear:wear-remote-interactions:[^"]+"\)\s*\n', '', bs, flags=re.M)
           wbuild.write_text(bs)
 
-          print('0.6.4 navigation, in-app CAPTCHA browser and 32-bit ARM7 configuration applied')
+          print('0.6.5 navigation, in-app CAPTCHA browser and 32-bit ARM7 configuration applied')
           PY
           python3 /tmp/patch_wear_064.py
 
-      - name: Verify Wear OS 0.6.4 navigation, in-app CAPTCHA and ARMv7 ABI
+      - name: Verify Wear OS 0.6.5 navigation, in-app CAPTCHA and ARMv7 ABI
         shell: bash
         run: |
           set -euo pipefail
@@ -4505,8 +4505,10 @@ jobs:
           test -s wear/build.gradle.kts
           grep -q '":wear"' settings.gradle.kts
           grep -q 'https://maven.mozilla.org/maven2/' settings.gradle.kts
-          grep -q 'versionCode = 2026103108' wear/build.gradle.kts
-          grep -q 'versionName = "0.6.4"' wear/build.gradle.kts
+          grep -q 'versionCode = 2026103109' wear/build.gradle.kts
+          grep -q 'versionName = "0.6.5"' wear/build.gradle.kts
+          grep -q 'minorApiLevel = 2' wear/build.gradle.kts
+          grep -q 'version = release(37)' wear/build.gradle.kts
           grep -q 'abiFilters.add("armeabi-v7a")' wear/build.gradle.kts
           grep -q 'geckoview-armeabi-v7a:159.0.20261022150525' wear/build.gradle.kts
           test -s "$W/WearCaptchaCoordinator.kt"
@@ -4529,7 +4531,7 @@ jobs:
           grep -q 'pending.acceptValidate(validate)' "$W/WearCaptchaBrowser.kt"
           grep -q 'fun acceptValidate(validate: String?)' "$W/WearCaptchaCoordinator.kt"
           grep -q 'c001apk-wear://captcha?cid=' "$W/WearCaptchaBrowser.kt"
-          grep -q 'WEAR_VERSION_NAME = "0.6.4"' "$W/MoreScreens.kt"
+          grep -q 'WEAR_VERSION_NAME = "0.6.5"' "$W/MoreScreens.kt"
           grep -q '内置浏览验证' "$W/MoreScreens.kt"
           grep -q 'feedReplies(id, listType, page, fromAuthor)' "$W/DetailScreens.kt"
           grep -q 'subRepliesVerified(origin.id.orEmpty(), page)' "$W/DetailScreens.kt"
@@ -4580,29 +4582,30 @@ jobs:
           assert 'fun acceptValidate(validate: String?)' in coord
           build = Path('wear/build.gradle.kts').read_text()
           assert 'abiFilters.add("armeabi-v7a")' in build
+          assert 'version = release(37)' in build and 'minorApiLevel = 2' in build
           assert 'geckoview-armeabi-v7a:159.0.20261022150525' in build
           assert 'arm64-v8a' not in build
           print(f'Validated 8-entry single navigation rail, on-watch WebView/GeckoView proof callback, manifest and {len(kotlin)} Kotlin files; ABI filter is armeabi-v7a only.')
           PY
           python3 -m py_compile /tmp/patch_wear_064.py
-          echo 'Wear OS 0.6.4 source and 32-bit ABI checks passed.'
+          echo 'Wear OS 0.6.5 source and 32-bit ABI checks passed.'
 
-      - name: Build Wear OS 0.6.4 32-bit ARMv7 release APK
+      - name: Build Wear OS 0.6.5 32-bit ARMv7 release APK
         run: |
           chmod +x ./gradlew
           ./gradlew :wear:assembleRelease --no-daemon --stacktrace
 
-      - name: Verify APK 0.6.4 output and native ABI
+      - name: Verify APK 0.6.5 output and native ABI
         run: |
           set -euo pipefail
           ls -lh wear/build/outputs/apk/release/
           test -s wear/build/outputs/apk/release/wear-release.apk
           mkdir -p dist
-          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.4-32bit-InternalCaptcha-GalaxyWatch7.apk
-          sha256sum dist/Coolapk-WearOS-v0.6.4-32bit-InternalCaptcha-GalaxyWatch7.apk > dist/SHA256SUMS.txt
+          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.5-32bit-InternalCaptcha-GalaxyWatch7.apk
+          sha256sum dist/Coolapk-WearOS-v0.6.5-32bit-InternalCaptcha-GalaxyWatch7.apk > dist/SHA256SUMS.txt
           python3 - <<'PY'
           import zipfile
-          apk = 'dist/Coolapk-WearOS-v0.6.4-32bit-InternalCaptcha-GalaxyWatch7.apk'
+          apk = 'dist/Coolapk-WearOS-v0.6.5-32bit-InternalCaptcha-GalaxyWatch7.apk'
           with zipfile.ZipFile(apk) as z:
               abis = sorted({n.split('/')[1] for n in z.namelist() if n.startswith('lib/') and len(n.split('/')) > 2})
           print('APK native ABI folders:', abis)
@@ -4614,12 +4617,12 @@ jobs:
               f.write('required=armeabi-v7a\n')
               f.write('64bit_or_x86=none\n')
           PY
-          printf 'versionName=0.6.4\nversionCode=2026103108\ncompileSdk=37.0\nbuildTools=37.0.0\nabi=armeabi-v7a-only\nwebview=system-first\ngeckoview=159.0.20261022150525-armeabi-v7a\n' > dist/BUILD_INFO.txt
+          printf 'versionName=0.6.5\nversionCode=2026103109\ncompileSdk=37.2 (minorApiLevel=2)\nbuildTools=37.0.0\nabi=armeabi-v7a-only\nwebview=system-first\ngeckoview=159.0.20261022150525-armeabi-v7a\n' > dist/BUILD_INFO.txt
           printf 'source=%s\ncommit=%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> dist/BUILD_INFO.txt
 
       - name: Upload Wear APK
         uses: actions/upload-artifact@v7
         with:
-          name: Coolapk-WearOS-v0.6.4-32bit-InternalCaptcha-GalaxyWatch7
+          name: Coolapk-WearOS-v0.6.5-32bit-InternalCaptcha-GalaxyWatch7
           path: dist/
           if-no-files-found: error
