@@ -1,8 +1,9 @@
-# 酷安 Wear OS 6 / Galaxy Watch7 最终版自动编译工作流
+# 酷安 Wear OS 0.5.0 / Galaxy Watch7 SDK37 修复版自动编译工作流
 # 使用：上传到 .github/workflows/wear-apk.yml 后提交到 main。
 # 基于你最新上传的原版源码构建，保留 :core 网络层；手表端单独适配圆屏 UI。
 
-name: Build Coolapk Wear OS v0.5.0 - Galaxy Watch7
+name: Build Coolapk Wear OS v0.5.0 - SDK37 Fix - Galaxy Watch7
+run-name: Wear OS 0.5.0 SDK37 修复构建
 
 on:
   push:
@@ -11,25 +12,46 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Checkout latest source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Set up Android SDK tools
+        uses: android-actions/setup-android@v4
         with:
-          packages: 'platforms;android-37 build-tools;37.0.0'
+          packages: 'platform-tools'
+
+      - name: Install Android 37.0 platform and Build Tools 37.0.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          if [[ -z "$SDK_ROOT" ]]; then
+            echo "ANDROID_HOME / ANDROID_SDK_ROOT is not set" >&2
+            exit 1
+          fi
+          echo "Android SDK root: $SDK_ROOT"
+          sdkmanager --sdk_root="$SDK_ROOT" --install "platforms;android-37.0" "build-tools;37.0.0"
+          test -d "$SDK_ROOT/platforms/android-37.0"
+          test -d "$SDK_ROOT/build-tools/37.0.0"
+          # Some AGP versions still look up compileSdk 37 as platforms/android-37.
+          # Provide the compatibility alias while keeping the real 37.0 package intact.
+          if [[ ! -e "$SDK_ROOT/platforms/android-37" ]]; then
+            ln -s android-37.0 "$SDK_ROOT/platforms/android-37"
+          fi
+          echo "Installed Android SDK packages:"
+          sdkmanager --sdk_root="$SDK_ROOT" --list_installed | grep -E 'platforms;android-37|build-tools;37.0.0' || true
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Add Wear OS module
         shell: bash
@@ -2431,13 +2453,13 @@ jobs:
           ls -lh wear/build/outputs/apk/release/
           test -s wear/build/outputs/apk/release/wear-release.apk
           mkdir -p dist
-          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.5.0-GalaxyWatch7.apk
-          sha256sum dist/Coolapk-WearOS-v0.5.0-GalaxyWatch7.apk > dist/SHA256SUMS.txt
-          printf 'versionName=0.5.0\nversionCode=2026103101\nsource=ZaiLinn/c001apk (uploaded ZIP)\n' > dist/BUILD_INFO.txt
+          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.5.0-SDK37-Fix-GalaxyWatch7.apk
+          sha256sum dist/Coolapk-WearOS-v0.5.0-SDK37-Fix-GalaxyWatch7.apk > dist/SHA256SUMS.txt
+          printf 'versionName=0.5.0\nversionCode=2026103101\ncompileSdk=37.0\nbuildTools=37.0.0\nsource=ZaiLinn/c001apk (uploaded ZIP)\n' > dist/BUILD_INFO.txt
 
       - name: Upload Wear APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: Coolapk-WearOS-v0.5.0-GalaxyWatch7
+          name: Coolapk-WearOS-v0.5.0-SDK37-Fix-GalaxyWatch7
           path: dist/
           if-no-files-found: error
