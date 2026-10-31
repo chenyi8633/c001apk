@@ -1,9 +1,9 @@
-# 酷安 Wear OS 0.6.7 / Galaxy Watch7 32-bit ARMv7 返回修复、轻量毛玻璃与网络恢复优化版自动编译工作流
+# 酷安 Wear OS 0.6.8 / Galaxy Watch7 32-bit ARMv7 持久返回位置、性能与动效优化版自动编译工作流
 # 使用：将本文件放到 .github/workflows/wear-apk.yml 并提交到 main。
 # 从你 Fork 仓库当前提交构建，保留 :core 网络层；手表端单独适配圆屏 UI。
 
-name: Build Coolapk Wear OS v0.6.7 - ARMv7 - Network Recovery - Galaxy Watch7
-run-name: Wear OS 0.6.7 返回位置记忆、轻量毛玻璃、断网恢复、Wear OS 6/7、32 位 ARMv7
+name: Build Coolapk Wear OS v0.6.8 - ARMv7 - Persistent Navigation - Galaxy Watch7
+run-name: Wear OS 0.6.8 持久返回位置、轻量毛玻璃、流畅动效、性能优化、Wear OS 6/7、32 位 ARMv7
 
 on:
   push:
@@ -5178,7 +5178,403 @@ jobs:
           PY
           python3 /tmp/patch_wear_067_network.py
 
-      - name: Verify Wear OS 0.6.7 navigation, network recovery, in-app CAPTCHA and ARMv7 ABI
+      - name: Apply Wear OS 0.6.8 persistent tab, list restoration and animation polish
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/patch_wear_068_navigation.py <<'PY'
+          from pathlib import Path
+          import re
+          
+          ROOT = Path('wear/src/main')
+          PKG = ROOT / 'kotlin/com/zailinn/c001apk/wear'
+          
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f'{label}: expected exactly one match, found {count}')
+              return text.replace(old, new, 1)
+          
+          # 1) Persist the selected top-level destination and feed-list scroll state in the app's
+          # existing private SharedPreferences. The preference writes are debounced by the UI.
+          p = PKG / 'WearContainer.kt'
+          s = p.read_text()
+          anchor = '''    fun getInt(key: String, default: Int = 0): Int = prefs.getInt(key, default)
+              fun setInt(key: String, value: Int) { prefs.edit().putInt(key, value).apply(); settingsRevision++ }
+              fun getText(key: String, default: String = ""): String = prefs.getString(key, default).orEmpty()
+          '''
+          insert = '''    fun getInt(key: String, default: Int = 0): Int = prefs.getInt(key, default)
+              fun setInt(key: String, value: Int) { prefs.edit().putInt(key, value).apply(); settingsRevision++ }
+          
+              /** Navigation state is separate from user settings so saving a scroll never recomposes every screen. */
+              fun getNavigationInt(key: String, default: Int): Int = prefs.getInt("nav_$key", default)
+              fun saveNavigationInt(key: String, value: Int) {
+                  prefs.edit().putInt("nav_$key", value).apply()
+              }
+          
+              fun getChannelScrollPosition(key: String): Triple<Int, Int, String?> = Triple(
+                  prefs.getInt("channel_${key}_index", 1),
+                  prefs.getInt("channel_${key}_offset", 0),
+                  prefs.getString("channel_${key}_anchor", null),
+              )
+          
+              fun saveChannelScrollPosition(key: String, index: Int, offset: Int, anchorId: String? = null) {
+                  prefs.edit()
+                      .putInt("channel_${key}_index", index.coerceAtLeast(0))
+                      .putInt("channel_${key}_offset", offset.coerceIn(-4096, 4096))
+                      .putString("channel_${key}_anchor", anchorId)
+                      .apply()
+              }
+          
+              fun getChannelLoadedPages(key: String): Int = prefs.getInt("channel_${key}_pages", 0).coerceIn(0, 40)
+              fun saveChannelLoadedPages(key: String, pages: Int) {
+                  prefs.edit().putInt("channel_${key}_pages", pages.coerceIn(0, 40)).apply()
+              }
+          
+              fun getText(key: String, default: String = ""): String = prefs.getString(key, default).orEmpty()
+          '''
+          s = replace_once(s, anchor, insert, 'WearContainer navigation persistence helpers')
+          p.write_text(s)
+          
+          # 2) Remove the old forced-home effect. It overwrote the restored PagerState after the
+          # app/activity returned from the background, which explains the delayed jump to 推荐.
+          p = PKG / 'WearApp.kt'
+          s = p.read_text()
+          if 'import androidx.compose.runtime.snapshotFlow\n' not in s:
+              s = replace_once(s, 'import androidx.compose.runtime.setValue\n',
+                  'import androidx.compose.runtime.setValue\nimport androidx.compose.runtime.snapshotFlow\n',
+                  'WearApp snapshotFlow import')
+          if 'import kotlinx.coroutines.flow.distinctUntilChanged\n' not in s:
+              s = s.replace('import com.zailinn.c001apk.core.model.Datum\n',
+                  'import com.zailinn.c001apk.core.model.Datum\nimport kotlinx.coroutines.flow.distinctUntilChanged\n', 1)
+          s = replace_once(s,
+          '''            val configuredHome = container.getInt("home_channel", 1).coerceIn(1, 5)
+                      val channelPagerState = rememberPagerState(initialPage = configuredHome - 1) { 8 }
+          ''',
+          '''            val configuredHome = container.getInt("home_channel", 1).coerceIn(1, 5)
+                      // SharedPreferences outlives a killed/recreated activity; rememberPagerState alone
+                      // only helps when Android restores this composition's saved instance state.
+                      val lastChannelPage = container.getNavigationInt("last_channel_page", configuredHome - 1).coerceIn(0, 7)
+                      val channelPagerState = rememberPagerState(initialPage = lastChannelPage) { 8 }
+                      LaunchedEffect(channelPagerState) {
+                          snapshotFlow { channelPagerState.settledPage }
+                              .distinctUntilChanged()
+                              .collect { page -> container.saveNavigationInt("last_channel_page", page) }
+                      }
+                      // The "default home" preference is applied only when the user explicitly changes it,
+                      // never on ordinary activity/process restoration.
+                      LaunchedEffect(settingsRevision) {
+                          val requestedHome = container.getNavigationInt("pending_home_channel", -1)
+                          if (requestedHome in 1..5) {
+                              container.saveNavigationInt("pending_home_channel", -1)
+                              channelPagerState.animateScrollToPage(requestedHome - 1)
+                          }
+                      }
+          ''', 'WearApp durable pager page')
+          s = replace_once(s,
+          '''            LaunchedEffect(configuredHome) {
+                          val page = configuredHome - 1
+                          if (channelPagerState.currentPage != page) channelPagerState.animateScrollToPage(page)
+                      }
+          ''',
+          '''            // Do not force the configured default page here. It would undo a saved browsing tab
+                      // whenever the activity is recreated after a longer detail-view session.
+          ''', 'Remove home-page reset effect')
+          p.write_text(s)
+          
+          # 3) Persist feed page count and exact ScalingLazyListState center index/offset. If the
+          # process is reclaimed while a long post is open, reload the same number of pages before
+          # restoring the scroll anchor; this avoids clamping the saved index against an empty list.
+          p = PKG / 'PagedFeed.kt'
+          s = p.read_text()
+          anchor = '''    /** Counts finished loads, so the screen knows when to ask for the next page. */
+              var loadedPages by mutableIntStateOf(0)
+                  private set
+          
+              private var loading = false
+          '''
+          insert = '''    /** Counts finished loads, so the screen knows when to ask for the next page. */
+              var loadedPages by mutableIntStateOf(0)
+                  private set
+          
+              /** Successful pages, unlike loadedPages, never counts failed requests or retries. */
+              val successfulPages: Int get() = (page - 1).coerceAtLeast(0)
+          
+              private var loading = false
+          '''
+          s = replace_once(s, anchor, insert, 'PagedFeed successful page count')
+          p.write_text(s)
+          
+          p = PKG / 'ChannelScreens.kt'
+          s = p.read_text()
+          for imp, after in [
+              ('import androidx.compose.runtime.snapshotFlow\n', 'import androidx.compose.runtime.remember\n'),
+              ('import androidx.compose.runtime.withFrameNanos\n', 'import androidx.compose.runtime.snapshotFlow\n'),
+              ('import kotlinx.coroutines.delay\n', 'import kotlinx.coroutines.launch\n'),
+              ('import kotlinx.coroutines.flow.distinctUntilChanged\n', 'import kotlinx.coroutines.delay\n'),
+              ('import kotlinx.coroutines.flow.collectLatest\n', 'import kotlinx.coroutines.flow.distinctUntilChanged\n'),
+          ]:
+              if imp not in s:
+                  s = replace_once(s, after, after + imp, f'ChannelScreens import {imp.strip()}')
+          old = '''    val feedKey = "$title:${container.accountVersion}"
+              val feed = remember(retainedFeeds, feedKey) {
+                  retainedFeeds.getOrPut(feedKey) {
+                      container.newPagedFeed { page ->
+                          if (url == null) container.repository.homeFeed(page, 1, container.installTime)
+                          else container.repository.dataList(url, dataTitle ?: title, page, hideFolded = true)
+                      }
+                  }
+              }
+              val refreshRevision = container.homeRefreshRevision
+              LaunchedEffect(refreshRevision) {
+                  if (refreshRevision > 0) {
+                      feed.reset()
+                      feed.loadNext()
+                  }
+              }
+              val cards = remember(feed.items, container.settingsRevision) { container.visibleFeeds(feed.items) }
+              LaunchedEffect(feed.loadedPages) { if (feed.loadedPages == 0) feed.loadNext() }
+          '''
+          new = '''    // Stable cache identity across process restarts; accountVersion is intentionally kept only
+              // in the in-memory map key so a fresh login invalidates the current in-memory feed instance.
+              val durableFeedKey = "$title:${container.account?.uid ?: "guest"}"
+              val feedKey = "$durableFeedKey:${container.accountVersion}"
+              val savedPages = remember(durableFeedKey) { container.getChannelLoadedPages(durableFeedKey) }
+              val savedPosition = remember(durableFeedKey) { container.getChannelScrollPosition(durableFeedKey) }
+              var restoring by remember(durableFeedKey) { mutableStateOf(true) }
+              val feed = remember(retainedFeeds, feedKey) {
+                  retainedFeeds.getOrPut(feedKey) {
+                      container.newPagedFeed { page ->
+                          if (url == null) container.repository.homeFeed(page, 1, container.installTime)
+                          else container.repository.dataList(url, dataTitle ?: title, page, hideFolded = true)
+                      }
+                  }
+              }
+              val cards = remember(feed.items, container.settingsRevision) { container.visibleFeeds(feed.items) }
+              val refreshRevision = container.homeRefreshRevision
+              var handledRefresh by remember(durableFeedKey) { mutableIntStateOf(refreshRevision) }
+              // Restore loaded pages before applying the saved viewport. If the optional "refresh on return"
+              // setting is enabled, refresh the same number of pages but preserve the saved anchor/offset.
+              LaunchedEffect(feed, savedPages, refreshRevision) {
+                  restoring = true
+                  try {
+                      val shouldRefresh = refreshRevision > handledRefresh
+                      val positionToRestore = if (shouldRefresh) {
+                          container.getChannelScrollPosition(durableFeedKey)
+                      } else savedPosition
+                      val pagesToRestore = if (shouldRefresh) {
+                          maxOf(container.getChannelLoadedPages(durableFeedKey), feed.successfulPages)
+                      } else savedPages
+                      if (shouldRefresh) {
+                          handledRefresh = refreshRevision
+                          feed.reset()
+                      }
+                      // A bounded page replay reconstructs the list after process death without an
+                      // unbounded background worker. Anchor ID resolves small changes in feed ordering.
+                      val targetPages = pagesToRestore.coerceIn(0, 40)
+                      while (feed.successfulPages < targetPages && !feed.ended) {
+                          val before = feed.successfulPages
+                          feed.loadNext()
+                          if (feed.successfulPages <= before || feed.error != null) break
+                      }
+                      if (feed.items.isEmpty() && feed.error == null && !feed.ended) feed.loadNext()
+                      val restoredCards = container.visibleFeeds(feed.items)
+                      val anchorIndex = positionToRestore.third?.let { savedId ->
+                          restoredCards.indexOfFirst { (it.entityId ?: it.id) == savedId }
+                              .takeIf { it >= 0 }?.plus(1)
+                      }
+                      val restoredCount = restoredCards.size + 1
+                      val restoreIndex = (anchorIndex ?: positionToRestore.first).coerceIn(0, restoredCount)
+                      if (restoredCards.isNotEmpty() && restoreIndex > 0) {
+                          withFrameNanos { }
+                          state.scrollToItem(restoreIndex, positionToRestore.second)
+                      }
+                      // A temporary network failure must not erase the last known successful page count.
+                      if (feed.successfulPages > container.getChannelLoadedPages(durableFeedKey)) {
+                          container.saveChannelLoadedPages(durableFeedKey, feed.successfulPages)
+                      }
+                  } finally {
+                      restoring = false
+                  }
+              }
+              LaunchedEffect(feed.loadedPages) {
+                  // Do not erase a previously saved page count with the initial empty in-memory feed.
+                  if (feed.successfulPages > container.getChannelLoadedPages(durableFeedKey)) {
+                      container.saveChannelLoadedPages(durableFeedKey, feed.successfulPages)
+                  }
+              }
+              // Save after scrolling settles, and synchronously at the instant a post is opened.
+              LaunchedEffect(state, durableFeedKey, cards, restoring) {
+                  snapshotFlow { state.centerItemIndex to state.centerItemScrollOffset }
+                      .distinctUntilChanged()
+                      .collectLatest { (index, offset) ->
+                          delay(500L)
+                          if (!restoring && cards.isNotEmpty() && feed.error == null && index >= 0) {
+                              val anchor = cards.getOrNull(index - 1)?.let { it.entityId ?: it.id }
+                              container.saveChannelScrollPosition(durableFeedKey, index, offset, anchor)
+                          }
+                      }
+              }
+          '''
+          s = replace_once(s, old, new, 'FeedChannel durable page and scroll restoration')
+          s = replace_once(s,
+              '    PrefetchNearEnd(feed, state, cards.size)\n',
+              '    PrefetchNearEnd(feed, state, cards.size, enabled = !restoring)\n',
+              'Disable prefetch until list restoration completes')
+          old_prefetch = '''private fun PrefetchNearEnd(feed: PagedFeed, state: androidx.wear.compose.foundation.lazy.ScalingLazyListState, count: Int) {
+              LaunchedEffect(state, count) {
+                  androidx.compose.runtime.snapshotFlow { state.centerItemIndex }.collect { index ->
+                      if (count > 0 && index >= count - 2) feed.loadNext()
+                  }
+              }
+          }'''
+          new_prefetch = '''private fun PrefetchNearEnd(
+              feed: PagedFeed,
+              state: androidx.wear.compose.foundation.lazy.ScalingLazyListState,
+              count: Int,
+              enabled: Boolean = true,
+          ) {
+              LaunchedEffect(state, count, enabled) {
+                  if (!enabled) return@LaunchedEffect
+                  androidx.compose.runtime.snapshotFlow { state.centerItemIndex }.collect { index ->
+                      if (count > 0 && index >= count - 2) feed.loadNext()
+                  }
+              }
+          }'''
+          s = replace_once(s, old_prefetch, new_prefetch, 'Pause prefetch during durable restore')
+          s = s.replace(
+              'FeedCard(it, onClick = { onOpenFeed(it) }, onUser = onOpenUser, onTarget = onOpenTarget)',
+              '''FeedCard(it, onClick = {
+                              // Save the viewport center rather than the tapped row: this restores the
+                              // same visible list window when the detail page is dismissed later.
+                              val centerIndex = state.centerItemIndex.coerceAtLeast(0)
+                              val anchor = cards.getOrNull(centerIndex - 1)?.let { row -> row.entityId ?: row.id }
+                              container.saveChannelScrollPosition(
+                                  durableFeedKey,
+                                  centerIndex,
+                                  state.centerItemScrollOffset,
+                                  anchor,
+                              )
+                              onOpenFeed(it)
+                          }, onUser = onOpenUser, onTarget = onOpenTarget)''',
+              1,
+          )
+          # Reduce the only real-time blur layer on the top rail; keep the glass visual using static tint/highlight.
+          s = s.replace('.blur(8.dp),', '.blur(4.dp),', 1)
+          p.write_text(s)
+          
+          # 4) Make changing the "default home" preference explicit, without overwriting the last
+          # browsed page on every app resume.
+          p = PKG / 'MoreScreens.kt'
+          s = p.read_text()
+          s = replace_once(s,
+          '''item { ToggleButton(container, "refresh_on_return", "返回首页时刷新", "从其他页面返回首页时重新加载当前频道", false) }''',
+          '''item { ToggleButton(container, "refresh_on_return", "返回首页时刷新（保留位置）", "重新加载当前频道数据，同时尽量恢复上次阅读位置", false) }''',
+              'Clarify that automatic return refresh preserves the scroll anchor')
+          s = replace_once(s,
+          '''item { MenuButton(if (container.getInt("home_channel", 1) == page) "✓ $label" else label) { container.setInt("home_channel", page); message = "默认首页已设为$label" } }''',
+          '''item { MenuButton(if (container.getInt("home_channel", 1) == page) "✓ $label" else label) { container.setInt("home_channel", page); container.saveNavigationInt("pending_home_channel", page); message = "默认首页已设为$label" } }''',
+              'Persist explicit default home selection')
+          s = s.replace('const val WEAR_VERSION_NAME = "0.6.7"', 'const val WEAR_VERSION_NAME = "0.6.8"')
+          s = s.replace('"酷安 Wear OS 版 0.6.7"', '"酷安 Wear OS 版 0.6.8"')
+          p.write_text(s)
+          
+          # 5) Add a restrained selection animation to the top rail. This animates only tint/stroke/scale
+          # (no continuous/infinite animation and no per-card backdrop blur).
+          p = PKG / 'Components.kt'
+          s = p.read_text()
+          if 'import androidx.compose.animation.core.animateFloatAsState\n' not in s:
+              s = replace_once(s, 'import androidx.compose.animation.core.animateFloat\n',
+                  'import androidx.compose.animation.core.animateFloat\nimport androidx.compose.animation.core.animateFloatAsState\n',
+                  'Components animateFloatAsState import')
+          if 'import androidx.compose.animation.core.tween\n' not in s:
+              s = replace_once(s, 'import androidx.compose.animation.core.animateFloatAsState\n',
+                  'import androidx.compose.animation.core.animateFloatAsState\nimport androidx.compose.animation.core.tween\n',
+                  'Components tween import')
+          anchor = '''fun ChoiceButton(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+              val shape = RoundedCornerShape(50)
+              val background = if (selected) Brand.copy(alpha = 0.24f) else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.58f)
+              val stroke = if (selected) Brand.copy(alpha = 0.62f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.28f)
+              Box(
+                  modifier = modifier.clip(shape)
+                      .background(Brush.verticalGradient(listOf(background.copy(alpha = (background.alpha + 0.10f).coerceAtMost(1f)), background)))
+                      .border(1.dp, stroke, shape)
+                      .clickable(onClick = onClick)
+                      .padding(horizontal = 11.dp, vertical = 7.dp),
+                  contentAlignment = Alignment.Center,
+              ) {
+                  Text(text, maxLines = 1, color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+              }
+          }'''
+          replacement = '''fun ChoiceButton(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+              val shape = RoundedCornerShape(50)
+              val targetBackground = if (selected) Brand.copy(alpha = 0.24f) else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.58f)
+              val targetStroke = if (selected) Brand.copy(alpha = 0.62f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.28f)
+              val background by animateColorAsState(targetBackground, animationSpec = tween(170), label = "rail-pill-background")
+              val stroke by animateColorAsState(targetStroke, animationSpec = tween(170), label = "rail-pill-stroke")
+              val scale by animateFloatAsState(if (selected) 1.035f else 1f, animationSpec = tween(150), label = "rail-pill-scale")
+              Box(
+                  modifier = modifier.graphicsLayer { scaleX = scale; scaleY = scale }
+                      .clip(shape)
+                      .background(Brush.verticalGradient(listOf(background.copy(alpha = (background.alpha + 0.10f).coerceAtMost(1f)), background)))
+                      .border(1.dp, stroke, shape)
+                      .clickable(onClick = onClick)
+                      .padding(horizontal = 11.dp, vertical = 7.dp),
+                  contentAlignment = Alignment.Center,
+              ) {
+                  Text(text, maxLines = 1, color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+              }
+          }'''
+          s = replace_once(s, anchor, replacement, 'Animated ChoiceButton')
+          p.write_text(s)
+          
+          # 6) Update Android package version as well as the in-app About label.
+          build_file = Path('wear/build.gradle.kts')
+          bs = build_file.read_text()
+          if 'versionName = "0.6.7"' not in bs:
+              raise SystemExit('Expected generated Wear build.gradle.kts versionName 0.6.7')
+          if 'versionCode = 2026103112' not in bs:
+              raise SystemExit('Expected generated Wear build.gradle.kts versionCode 2026103112')
+          bs = bs.replace('versionCode = 2026103112', 'versionCode = 2026103113', 1)
+          bs = bs.replace('versionName = "0.6.7"', 'versionName = "0.6.8"', 1)
+          build_file.write_text(bs)
+          
+          # Source guardrails: prevent the exact regression that previously forced every restored user
+          # back to the configured default page.
+          app = (PKG / 'WearApp.kt').read_text()
+          assert 'LaunchedEffect(configuredHome)' not in app
+          assert 'getNavigationInt("last_channel_page"' in app
+          assert 'saveNavigationInt("last_channel_page", page)' in app
+          assert 'snapshotFlow { channelPagerState.settledPage }' in app
+          assert 'pending_home_channel' in app
+          channel = (PKG / 'ChannelScreens.kt').read_text()
+          assert 'getChannelLoadedPages(durableFeedKey)' in channel
+          assert 'restoredCards.isNotEmpty() && restoreIndex > 0' in channel
+          assert 'state.scrollToItem(restoreIndex, positionToRestore.second)' in channel
+          assert 'positionToRestore.third' in channel and 'enabled = !restoring' in channel
+          assert 'saveChannelScrollPosition(\n                        durableFeedKey' in channel
+          assert 'val centerIndex = state.centerItemIndex.coerceAtLeast(0)' in channel
+          assert 'val anchor = cards.getOrNull(centerIndex - 1)' in channel
+          assert 'feed.successfulPages > container.getChannelLoadedPages(durableFeedKey)' in channel
+          assert 'pagesToRestore.coerceIn(0, 40)' in channel
+          assert 'positionToRestore' in channel and 'pagesToRestore' in channel
+          assert 'saveChannelScrollPosition(durableFeedKey, 1, 0)' not in channel
+          assert 'tappedIndex' not in channel
+          assert 'collectLatest { (index, offset) ->' in channel and 'delay(500L)' in channel
+          assert 'while (feed.successfulPages < targetPages && !feed.ended)' in channel
+          assert channel.index('val cards = remember(feed.items, container.settingsRevision)') < channel.index('LaunchedEffect(state, durableFeedKey, cards, restoring)')
+          assert 'if (!enabled) return@LaunchedEffect' in channel
+          assert 'if (!restoring && cards.isNotEmpty() && feed.error == null && index >= 0)' in channel
+          assert '.blur(4.dp)' in channel
+          components = (PKG / 'Components.kt').read_text()
+          assert 'animateFloatAsState' in components and 'rail-pill-scale' in components
+          assert bs.count('versionName = "0.6.8"') == 1
+          assert bs.count('versionCode = 2026103113') == 1
+          print('0.6.8 persistent tab + feed pages + scroll anchor + explicit default-home + light rail animation patch applied')
+          PY
+          python3 /tmp/patch_wear_068_navigation.py
+
+      - name: Verify Wear OS 0.6.8 durable navigation, network recovery, glass UI and ARMv7 ABI
         shell: bash
         run: |
           set -euo pipefail
@@ -5190,8 +5586,8 @@ jobs:
           test -s wear/build.gradle.kts
           grep -q '":wear"' settings.gradle.kts
           grep -q 'https://maven.mozilla.org/maven2/' settings.gradle.kts
-          grep -q 'versionCode = 2026103112' wear/build.gradle.kts
-          grep -q 'versionName = "0.6.7"' wear/build.gradle.kts
+          grep -q 'versionCode = 2026103113' wear/build.gradle.kts
+          grep -q 'versionName = "0.6.8"' wear/build.gradle.kts
           grep -q 'targetSdk = 37' wear/build.gradle.kts
           grep -q 'minorApiLevel = 2' wear/build.gradle.kts
           grep -q 'version = release(37)' wear/build.gradle.kts
@@ -5206,6 +5602,26 @@ jobs:
           grep -q 'callTimeout(30, TimeUnit.SECONDS)' "$W/WearContainer.kt"
           grep -q 'retryOnConnectionFailure(true)' "$W/WearContainer.kt"
           grep -q 'awaitNetwork()' "$W/PagedFeed.kt"
+          grep -q 'getNavigationInt("last_channel_page"' "$W/WearApp.kt"
+          grep -q 'saveNavigationInt("last_channel_page", page)' "$W/WearApp.kt"
+          if grep -q 'LaunchedEffect(configuredHome)' "$W/WearApp.kt"; then echo 'Old forced-home reset regression detected' >&2; exit 1; fi
+          grep -q 'getChannelLoadedPages(durableFeedKey)' "$W/ChannelScreens.kt"
+          grep -q 'state.scrollToItem(restoreIndex, positionToRestore.second)' "$W/ChannelScreens.kt"
+          grep -q 'container.saveChannelScrollPosition(durableFeedKey, index, offset, anchor)' "$W/ChannelScreens.kt"
+          grep -q 'collectLatest { (index, offset) ->' "$W/ChannelScreens.kt"
+          grep -q 'delay(500L)' "$W/ChannelScreens.kt"
+          grep -q 'successfulPages' "$W/PagedFeed.kt"
+          grep -q 'enabled = !restoring' "$W/ChannelScreens.kt"
+          grep -q 'if (!restoring && cards.isNotEmpty() && feed.error == null && index >= 0)' "$W/ChannelScreens.kt"
+          grep -q 'feed.successfulPages > container.getChannelLoadedPages(durableFeedKey)' "$W/ChannelScreens.kt"
+          grep -q 'positionToRestore' "$W/ChannelScreens.kt"
+          grep -q 'pagesToRestore' "$W/ChannelScreens.kt"
+          if grep -q 'saveChannelScrollPosition(durableFeedKey, 1, 0)' "$W/ChannelScreens.kt"; then echo 'Refresh must not reset stored scroll anchor.' >&2; exit 1; fi
+          grep -q 'val centerIndex = state.centerItemIndex.coerceAtLeast(0)' "$W/ChannelScreens.kt"
+          grep -q 'val anchor = cards.getOrNull(centerIndex - 1)' "$W/ChannelScreens.kt"
+          if grep -q 'tappedIndex' "$W/ChannelScreens.kt"; then echo 'Tapped-row index must not replace viewport anchor.' >&2; exit 1; fi
+          grep -q 'animateFloatAsState' "$W/Components.kt"
+          grep -q 'rail-pill-scale' "$W/Components.kt"
           grep -q 'OFFLINE_MESSAGE' "$W/PagedFeed.kt"
           grep -q '^import androidx.compose.ui.draw.clip$' "$W/ChannelScreens.kt"
           test "$(grep -Roh 'container.newPagedFeed' "$W" | wc -l)" -ge 8
@@ -5233,7 +5649,7 @@ jobs:
           grep -q 'onBack = { navController.popBackStack() }' "$W/WearApp.kt"
           grep -q 'fun GlassCard(' "$W/Components.kt"
           grep -q 'Brush.verticalGradient' "$W/Components.kt"
-          grep -q '\.blur(8.dp)' "$W/ChannelScreens.kt"
+          grep -q '\.blur(4.dp)' "$W/ChannelScreens.kt"
           grep -q '^import androidx.compose.ui.draw.clip$' "$W/ChannelScreens.kt"
           grep -q 'beyondViewportPageCount = 0' "$W/ChannelScreens.kt"
           grep -q 'android.webkit.WebView' "$W/WearCaptchaBrowser.kt"
@@ -5243,7 +5659,7 @@ jobs:
           grep -q 'pending.acceptValidate(validate)' "$W/WearCaptchaBrowser.kt"
           grep -q 'fun acceptValidate(validate: String?)' "$W/WearCaptchaCoordinator.kt"
           grep -q 'c001apk-wear://captcha?cid=' "$W/WearCaptchaBrowser.kt"
-          grep -q 'WEAR_VERSION_NAME = "0.6.7"' "$W/MoreScreens.kt"
+          grep -q 'WEAR_VERSION_NAME = "0.6.8"' "$W/MoreScreens.kt"
           grep -q '内置浏览验证' "$W/MoreScreens.kt"
           grep -q 'feedReplies(id, listType, page, fromAuthor)' "$W/DetailScreens.kt"
           grep -q 'subRepliesVerified(origin.id.orEmpty(), page)' "$W/DetailScreens.kt"
@@ -5300,6 +5716,28 @@ jobs:
           assert 'withTimeoutOrNull' in monitor and 'OFFLINE_MESSAGE' in monitor
           assert 'callTimeout(30, TimeUnit.SECONDS)' in container and 'retryOnConnectionFailure(true)' in container
           assert 'awaitNetwork()' in paged and 'result = load(requestPage)' in paged
+          assert 'val successfulPages: Int get()' in paged
+          assert 'getNavigationInt("last_channel_page"' in app
+          assert 'saveNavigationInt("last_channel_page", page)' in app
+          assert 'snapshotFlow { channelPagerState.settledPage }' in app
+          assert 'LaunchedEffect(configuredHome)' not in app
+          assert 'pending_home_channel' in app and 'pending_home_channel' in (base / 'kotlin/com/zailinn/c001apk/wear/MoreScreens.kt').read_text()
+          assert 'getChannelLoadedPages(durableFeedKey)' in channel
+          assert 'state.scrollToItem(restoreIndex, positionToRestore.second)' in channel
+          assert 'container.saveChannelScrollPosition(durableFeedKey, index, offset, anchor)' in channel
+          assert 'collectLatest { (index, offset) ->' in channel and 'delay(500L)' in channel
+          assert 'enabled = !restoring' in channel and 'if (!restoring && cards.isNotEmpty() && feed.error == null && index >= 0)' in channel
+          assert 'feed.successfulPages > container.getChannelLoadedPages(durableFeedKey)' in channel
+          assert 'pagesToRestore.coerceIn(0, 40)' in channel
+          assert 'positionToRestore' in channel and 'pagesToRestore' in channel
+          assert 'saveChannelScrollPosition(durableFeedKey, 1, 0)' not in channel
+          assert 'val centerIndex = state.centerItemIndex.coerceAtLeast(0)' in channel
+          assert 'val anchor = cards.getOrNull(centerIndex - 1)' in channel
+          assert 'tappedIndex' not in channel
+          assert channel.index('val cards = remember(feed.items, container.settingsRevision)') < channel.index('LaunchedEffect(state, durableFeedKey, cards, restoring)')
+          assert '.blur(4.dp)' in channel
+          components = (base / 'kotlin/com/zailinn/c001apk/wear/Components.kt').read_text()
+          assert 'animateFloatAsState' in components and 'rail-pill-scale' in components
           assert 'android.permission.ACCESS_NETWORK_STATE' in (base / 'AndroidManifest.xml').read_text()
           assert channel.count('import androidx.compose.ui.draw.clip') == 1
           assert 'withRecovery' in channel and 'withRecovery' in (base / 'kotlin/com/zailinn/c001apk/wear/TargetScreen.kt').read_text()
@@ -5323,33 +5761,64 @@ jobs:
           assert 'arm64-v8a' not in build
           print(f'Validated 8-entry single navigation rail, on-watch WebView/GeckoView proof callback, manifest and {len(kotlin)} Kotlin files; ABI filter is armeabi-v7a only.')
           PY
-          python3 -m py_compile /tmp/patch_wear_064.py /tmp/patch_wear_066.py /tmp/patch_wear_067_network.py
-          echo 'Wear OS 0.6.7 retained navigation, glass UI, validated-network recovery, bounded timeouts, API 37 and ARMv7-only checks passed.'
+          python3 -m py_compile /tmp/patch_wear_064.py /tmp/patch_wear_066.py /tmp/patch_wear_067_network.py /tmp/patch_wear_068_navigation.py
+          echo 'Wear OS 0.6.8 persistent navigation, list restore, glass UI, bounded network recovery, Wear OS 6/7 and ARMv7-only checks passed.'
+          python3 - <<'PY'
+          from pathlib import Path
+          app = Path('wear/src/main/kotlin/com/zailinn/c001apk/wear/WearApp.kt').read_text()
+          assert 'rememberPagerState(initialPage = lastChannelPage) { 8 }' in app
+          assert 'LaunchedEffect(configuredHome)' not in app
+          assert 'pending_home_channel' in app
+          channel = Path('wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt').read_text()
+          assert 'while (feed.successfulPages < targetPages && !feed.ended)' in channel
+          assert 'withFrameNanos { }' in channel
+          assert 'PrefetchNearEnd(feed, state, cards.size, enabled = !restoring)' in channel
+          assert 'feed.successfulPages > container.getChannelLoadedPages(durableFeedKey)' in channel
+          assert 'pagesToRestore.coerceIn(0, 40)' in channel
+          assert 'positionToRestore' in channel and 'pagesToRestore' in channel
+          assert 'saveChannelScrollPosition(durableFeedKey, 1, 0)' not in channel
+          assert 'val centerIndex = state.centerItemIndex.coerceAtLeast(0)' in channel
+          assert 'val anchor = cards.getOrNull(centerIndex - 1)' in channel
+          assert 'tappedIndex' not in channel
+          assert channel.index('val cards = remember(feed.items, container.settingsRevision)') < channel.index('LaunchedEffect(state, durableFeedKey, cards, restoring)')
+          # Regression simulation: a failed or partial restore cannot lower the last known page count.
+          saved_pages = 9
+          for recovered_pages in (0, 1, 2, 8, 9):
+              persisted_pages = max(saved_pages, recovered_pages)
+              assert persisted_pages == 9, (recovered_pages, persisted_pages)
+          assert max(saved_pages, 10) == 10  # new successful pages still extend the cache horizon
+          assert 'val targetPages = pagesToRestore.coerceIn(0, 40)' in channel
+          rows = ['feed-a', 'feed-b', 'feed-c', 'feed-d']
+          saved_anchor = 'feed-c'
+          resolved_index = rows.index(saved_anchor) + 1
+          assert resolved_index == 3
+          print('Persistent navigation, partial-failure-safe page count, 40-page horizon and anchor restoration checks passed.')
+          PY
 
-      - name: Kotlin compile preflight - Wear OS 0.6.7
+      - name: Kotlin compile preflight - Wear OS 0.6.8
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./gradlew
           ./gradlew :wear:compileReleaseKotlin --no-daemon --stacktrace --console=plain
 
-      - name: Build Wear OS 0.6.7 32-bit ARMv7 release APK
+      - name: Build Wear OS 0.6.8 32-bit ARMv7 release APK
         shell: bash
         run: |
           set -euo pipefail
           ./gradlew :wear:assembleRelease --no-daemon --stacktrace --console=plain
 
-      - name: Verify APK 0.6.7 output and native ABI
+      - name: Verify APK 0.6.8 output and native ABI
         run: |
           set -euo pipefail
           ls -lh wear/build/outputs/apk/release/
           test -s wear/build/outputs/apk/release/wear-release.apk
           mkdir -p dist
-          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.7-32bit-NetworkRecovery-Glass-GalaxyWatch7.apk
-          sha256sum dist/Coolapk-WearOS-v0.6.7-32bit-NetworkRecovery-Glass-GalaxyWatch7.apk > dist/SHA256SUMS.txt
+          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.8-32bit-PersistentNavigation-GalaxyWatch7.apk
+          sha256sum dist/Coolapk-WearOS-v0.6.8-32bit-PersistentNavigation-GalaxyWatch7.apk > dist/SHA256SUMS.txt
           python3 - <<'PY'
           import zipfile
-          apk = 'dist/Coolapk-WearOS-v0.6.7-32bit-NetworkRecovery-Glass-GalaxyWatch7.apk'
+          apk = 'dist/Coolapk-WearOS-v0.6.8-32bit-PersistentNavigation-GalaxyWatch7.apk'
           with zipfile.ZipFile(apk) as z:
               abis = sorted({n.split('/')[1] for n in z.namelist() if n.startswith('lib/') and len(n.split('/')) > 2})
           print('APK native ABI folders:', abis)
@@ -5361,12 +5830,12 @@ jobs:
               f.write('required=armeabi-v7a\n')
               f.write('64bit_or_x86=none\n')
           PY
-          printf 'versionName=0.6.7\nversionCode=2026103112\ntargetSdk=37\ncompileSdk=37.2 (minorApiLevel=2)\nbuildTools=37.0.0\nabi=armeabi-v7a-only\nwearOs=6-and-7\nminSdk=30\nnetworkRecovery=validated-route-callback+single-retry\nrequestTimeout=30s\nwebview=system-first\ngeckoview=159.0.20261022150525-armeabi-v7a\n' > dist/BUILD_INFO.txt
+          printf 'versionName=0.6.8\nversionCode=2026103113\ntargetSdk=37\ncompileSdk=37.2 (minorApiLevel=2)\nbuildTools=37.0.0\nabi=armeabi-v7a-only\nwearOs=6-and-7\nminSdk=30\nnetworkRecovery=validated-route-callback+single-retry\nrequestTimeout=30s\nnavigationPersistence=selected-tab+scroll-index-offset+reload-pages\nwebview=system-first\ngeckoview=159.0.20261022150525-armeabi-v7a\n' > dist/BUILD_INFO.txt
           printf 'source=%s\ncommit=%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> dist/BUILD_INFO.txt
 
       - name: Upload Wear APK
         uses: actions/upload-artifact@v7
         with:
-          name: Coolapk-WearOS-v0.6.7-32bit-NetworkRecovery-GalaxyWatch7
+          name: Coolapk-WearOS-v0.6.8-32bit-PersistentNavigation-GalaxyWatch7
           path: dist/
           if-no-files-found: error
