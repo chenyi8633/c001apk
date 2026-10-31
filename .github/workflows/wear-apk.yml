@@ -2,7 +2,7 @@
 # 使用：上传到 .github/workflows/wear-apk.yml 后提交到 main。
 # 基于你最新上传的原版源码构建，保留 :core 网络层；手表端单独适配圆屏 UI。
 
-name: Build Coolapk Wear OS APK
+name: Build Coolapk Wear OS v0.5.0 - Galaxy Watch7
 
 on:
   push:
@@ -36,15 +36,16 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf wear
-          mkdir -p wear
+          mkdir -p wear/src/main/kotlin/com/zailinn/c001apk/wear wear/src/main/res/drawable wear/src/main/res/xml
           python3 - <<'PY'
           from pathlib import Path
           p = Path('settings.gradle.kts')
           s = p.read_text()
-          if 'include(":wear")' not in s:
-              s = s.replace('include(":core", ":app")', 'include(":core", ":app", ":wear")')
-              if 'include(":wear")' not in s:
-                  s = s.replace('include(":core", ":app", ":wear")', 'include(":core", ":app", ":wear")')
+          if '":wear"' not in s:
+              original = 'include(":core", ":app")'
+              if original not in s:
+                  raise SystemExit("Cannot locate the original :core/:app module declaration in settings.gradle.kts")
+              s = s.replace(original, 'include(":core", ":app", ":wear")', 1)
           p.write_text(s)
           PY
           cat > wear/build.gradle.kts <<'WEAR_EOF'
@@ -61,8 +62,8 @@ jobs:
                   applicationId = "com.zailinn.c001apk.wear"
                   minSdk = 30
                   targetSdk = 36
-                  versionCode = 5
-                  versionName = "0.4.1"
+                  versionCode = 2026103101
+                  versionName = "0.5.0"
               }
           
               compileOptions {
@@ -1243,7 +1244,7 @@ jobs:
               val list = remember(origin.id, container.accountVersion) {
                   PagedFeed { page ->
                       try {
-                          container.repository.subRepliesVerified(origin.id.orEmpty(), page)
+                          container.repository.subReplies(origin.id.orEmpty(), page).result
                       } catch (e: CancellationException) {
                           throw e
                       } catch (e: Exception) {
@@ -1278,7 +1279,7 @@ jobs:
                       item {
                           ListFooter(
                               list,
-                              emptyText = if (list.error != null) "完整回复需要登录/验证，已显示上方预览" else "没有更多回复了",
+                              emptyText = if (list.error != null) "完整回复暂不可读取，已保留原帖回复预览" else "没有更多回复了",
                           )
                       }
                   }
@@ -1597,7 +1598,7 @@ jobs:
                       item { ListHeader { Text("关于") } }
                       item {
                           Text(
-                              "酷安 Wear OS 版 0.5",
+                              "酷安 Wear OS 版 0.5.0",
                               style = MaterialTheme.typography.titleSmall,
                               textAlign = TextAlign.Center,
                           )
@@ -2386,10 +2387,38 @@ jobs:
       - name: Verify Wear module is included
         run: |
           set -euo pipefail
-          grep -q 'include(":wear")' settings.gradle.kts
+          grep -q '":wear"' settings.gradle.kts
+          grep -q 'versionCode = 2026103101' wear/build.gradle.kts
+          grep -q 'versionName = \"0.5.0\"' wear/build.gradle.kts
           test -f wear/src/main/AndroidManifest.xml
           test -f wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
           test -f wear/src/main/kotlin/com/zailinn/c001apk/wear/ImageSaver.kt
+
+      - name: Check requested Wear features and source API compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPO=core/src/main/kotlin/com/zailinn/c001apk/core/net/CoolapkRepository.kt
+          test -f "$REPO"
+          for api in homeFeed dataList dataListFromUrl search feedDetail feedRepliesWithoutPrompt subReplies userSpace userFeed topicDetail postAction; do
+            grep -Eq "suspend fun ${api}\b" "$REPO" || { echo "Missing core API: ${api}"; exit 1; }
+          done
+          grep -q '"热门"' wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
+          grep -q '"话题"' wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
+          grep -q '"数码"' wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
+          grep -q '"酷图"' wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
+          grep -q '"搜索"' wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
+          grep -q 'HorizontalPager' wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
+          grep -q 'replyRows' wear/src/main/kotlin/com/zailinn/c001apk/wear/Components.kt
+          grep -q 'subReplies(origin.id.orEmpty(), page)' wear/src/main/kotlin/com/zailinn/c001apk/wear/DetailScreens.kt
+          grep -q 'MediaStore.Images.Media' wear/src/main/kotlin/com/zailinn/c001apk/wear/ImageSaver.kt
+          grep -q 'saveImage(context, url)' wear/src/main/kotlin/com/zailinn/c001apk/wear/AccountScreens.kt
+          grep -q 'userSpace(uid)' wear/src/main/kotlin/com/zailinn/c001apk/wear/DetailScreens.kt
+          grep -q 'topicDetail(target.tag, target.id)' wear/src/main/kotlin/com/zailinn/c001apk/wear/TargetScreen.kt
+          if grep -RIn 'android.webkit.WebView' wear/src/main/kotlin; then
+            echo 'Wear module must not require WebView.'; exit 1
+          fi
+          echo 'Requested feature/API checks passed.'
 
       - name: Build Wear release APK
         run: |
@@ -2400,11 +2429,15 @@ jobs:
         run: |
           set -euo pipefail
           ls -lh wear/build/outputs/apk/release/
-          test -f wear/build/outputs/apk/release/wear-release.apk
+          test -s wear/build/outputs/apk/release/wear-release.apk
+          mkdir -p dist
+          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.5.0-GalaxyWatch7.apk
+          sha256sum dist/Coolapk-WearOS-v0.5.0-GalaxyWatch7.apk > dist/SHA256SUMS.txt
+          printf 'versionName=0.5.0\nversionCode=2026103101\nsource=ZaiLinn/c001apk (uploaded ZIP)\n' > dist/BUILD_INFO.txt
 
       - name: Upload Wear APK
         uses: actions/upload-artifact@v4
         with:
-          name: Coolapk-WearOS-6-GalaxyWatch7
-          path: wear/build/outputs/apk/release/wear-release.apk
+          name: Coolapk-WearOS-v0.5.0-GalaxyWatch7
+          path: dist/
           if-no-files-found: error
