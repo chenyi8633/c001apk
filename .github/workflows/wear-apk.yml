@@ -1,9 +1,9 @@
-# 酷安 Wear OS 0.6.11 / Galaxy Watch7 32-bit ARMv7 持久返回位置、性能与动效优化版自动编译工作流
+# 酷安 Wear OS 0.6.12 / Galaxy Watch7 32-bit ARMv7 全频道状态保留、高斯模糊与流畅度优化版自动编译工作流
 # 使用：将本文件放到 .github/workflows/wear-apk.yml 并提交到 main。
 # 从你 Fork 仓库当前提交构建，保留 :core 网络层；手表端单独适配圆屏 UI。
 
-name: Build Coolapk Wear OS v0.6.11 - Root Navigation - ARMv7 - Galaxy Watch7
-run-name: Wear OS 0.6.11 根级导航栈保留、轻量毛玻璃、流畅动效、性能优化、Wear OS 6/7、32 位 ARMv7
+name: Build Coolapk Wear OS v0.6.12 - All Channels and Gaussian Glass - ARMv7 - Galaxy Watch7
+run-name: Wear OS 0.6.12 全频道返回状态保留、高斯模糊材质、手表性能优化、Wear OS 6/7、32 位 ARMv7
 
 on:
   push:
@@ -3464,33 +3464,33 @@ jobs:
           components = pkg / 'Components.kt'
           s = components.read_text()
           starts = [m.start() for m in re.finditer(r'(?m)^@Composable\s*\nfun WatchTextField\(', s)]
-          if len(starts) != 2:
-              raise SystemExit(f'Expected exactly two WatchTextField definitions before cleanup, found {len(starts)}')
-          start = starts[1]
-          # Find the function body's opening brace after the full parameter list. The old
-          # signature has a default empty lambda (`onImeAction = {}`), so the first `{` is
-          # NOT necessarily the function body.
-          signature_end = re.search(r'\)\s*\{', s[start:])
-          if signature_end is None:
-              raise SystemExit('Cannot locate second WatchTextField function body after its signature')
-          open_brace = start + signature_end.end() - 1
-          depth = 0
-          end = None
-          for i in range(open_brace, len(s)):
-              if s[i] == '{':
-                  depth += 1
-              elif s[i] == '}':
-                  depth -= 1
-                  if depth == 0:
-                      end = i + 1
-                      break
-          if end is None:
-              raise SystemExit('Cannot find end of duplicate WatchTextField')
-          # Remove preceding @Composable for the second declaration and following whitespace.
-          remove_start = s.rfind('@Composable', 0, start)
-          if remove_start < 0 or s[remove_start:start].strip():
-              remove_start = start
-          s = s[:remove_start] + s[end:]
+          if len(starts) == 2:
+              start = starts[1]
+              # Find the function body's opening brace after the full parameter list. The old
+              # signature has a default empty lambda (`onImeAction = {}`), so the first `{` is
+              # NOT necessarily the function body.
+              signature_end = re.search(r'\)\s*\{', s[start:])
+              if signature_end is None:
+                  raise SystemExit('Cannot locate second WatchTextField function body after its signature')
+              open_brace = start + signature_end.end() - 1
+              depth = 0
+              end = None
+              for i in range(open_brace, len(s)):
+                  if s[i] == '{':
+                      depth += 1
+                  elif s[i] == '}':
+                      depth -= 1
+                      if depth == 0:
+                          end = i + 1
+                          break
+              if end is None:
+                  raise SystemExit('Cannot find end of duplicate WatchTextField')
+              remove_start = s.rfind('@Composable', 0, start)
+              if remove_start < 0 or s[remove_start:start].strip():
+                  remove_start = start
+              s = s[:remove_start] + s[end:]
+          elif len(starts) != 1:
+              raise SystemExit(f'Expected one or two WatchTextField definitions, found {len(starts)}')
           components.write_text(s)
           
           # 2) Add a one-at-a-time verifier coordinator connected to the original Core captcha callback.
@@ -6075,7 +6075,1180 @@ jobs:
           python3 -m py_compile /tmp/patch_wear_0611_root_navigation.py
           python3 /tmp/patch_wear_0611_root_navigation.py
 
-      - name: Verify Wear OS 0.6.11 root navigation, network recovery, glass UI and ARMv7 ABI
+      - name: Apply Wear OS 0.6.12 all-channel sessions and Gaussian glass materials
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/patch_wear_0612.py <<'PATCH_EOF'
+          from pathlib import Path
+          pkg=Path('wear/src/main/kotlin/com/zailinn/c001apk/wear')
+          
+          # Add persistent session models to ChannelScreens.
+          p=pkg/'ChannelScreens.kt'; s=p.read_text()
+          insert='''
+          /** Root-owned channel state. The instance is retained above NavHost by WearApp. */
+          class ChannelHubSession {
+              var topicCategories by mutableStateOf<LoadResult<List<Datum>>?>(null)
+              var productCategories by mutableStateOf<LoadResult<List<Datum>>?>(null)
+              var topicRetry by mutableIntStateOf(0)
+              var productRetry by mutableIntStateOf(0)
+              val search = SearchChannelSession()
+              val me = MeScreenSession()
+              fun categoryState(topic: Boolean): LoadResult<List<Datum>>? = if (topic) topicCategories else productCategories
+              fun setCategoryState(topic: Boolean, value: LoadResult<List<Datum>>?) { if (topic) topicCategories = value else productCategories = value }
+              fun categoryRetry(topic: Boolean): Int = if (topic) topicRetry else productRetry
+              fun retryCategory(topic: Boolean) { setCategoryState(topic, null); if (topic) topicRetry++ else productRetry++ }
+          }
+          
+          class SearchChannelSession {
+              var text by mutableStateOf("")
+              var keyword by mutableStateOf<String?>(null)
+              private val cache = linkedMapOf<String, SearchTypeSession>()
+              fun resultSession(keyword: String, type: String): SearchTypeSession {
+                  val key = "$keyword::$type"
+                  return cache.getOrPut(key) { SearchTypeSession() }.also {
+                      while (cache.size > 24) cache.remove(cache.keys.first())
+                  }
+              }
+          }
+          
+          class SearchTypeSession {
+              var opened by mutableStateOf(false)
+              var results by mutableStateOf<List<Datum>>(emptyList())
+              var loading by mutableStateOf(false)
+              var retry by mutableIntStateOf(0)
+              var error by mutableStateOf<String?>(null)
+              var loaded by mutableStateOf(false)
+          }
+          
+          /** Category list feed, sort selection and viewport remain alive while detail routes are open. */
+          class CategoryFeedSession(container: WearContainer, category: Datum) {
+              val title: String = category.title.orEmpty().ifBlank { "板块" }
+              val baseUrl: String = category.url.orEmpty().trim()
+              var activeUrl by mutableStateOf(baseUrl)
+              var selectedSortUrl by mutableStateOf<String?>(null)
+              var scrollIndex by mutableIntStateOf(0)
+              var scrollOffset by mutableIntStateOf(0)
+              var scrollAnchor by mutableStateOf<String?>(null)
+              var accountVersion by mutableIntStateOf(container.accountVersion)
+              val feed: PagedFeed = container.newPagedFeed { page ->
+                  container.repository.dataList(activeUrl, title, page, includeConfigCard = true)
+              }
+          }
+          '''
+          if 'class ChannelHubSession {' not in s:
+              s=s.replace('@Composable\nfun ChannelHubScreen(',insert+'\n@Composable\nfun ChannelHubScreen(',1)
+          # Inject the retained state object into the root channel page.
+          s=s.replace('''    listStates: List<ScalingLazyListState>,
+              retainedFeeds: MutableMap<String, PagedFeed>,
+          ) {''','''    listStates: List<ScalingLazyListState>,
+              retainedFeeds: MutableMap<String, PagedFeed>,
+              hubSession: ChannelHubSession,
+          ) {''',1)
+          s=s.replace('CategoryIndexChannel(container, topic = true, onOpenCategory = onOpenCategory, listState = listStates[2])','CategoryIndexChannel(container, topic = true, onOpenCategory = onOpenCategory, listState = listStates[2], session = hubSession)',1)
+          s=s.replace('CategoryIndexChannel(container, topic = false, onOpenCategory = onOpenCategory, listState = listStates[3])','CategoryIndexChannel(container, topic = false, onOpenCategory = onOpenCategory, listState = listStates[3], session = hubSession)',1)
+          s=s.replace('SearchChannel(container, onOpenFeed, onOpenUser, onOpenTarget, listStates[5])','SearchChannel(container, onOpenFeed, onOpenUser, onOpenTarget, listStates[5], hubSession.search)',1)
+          s=s.replace('''                    listState = listStates[6],
+                          )''','''                    listState = listStates[6],
+                              session = hubSession.me,
+                          )''',1)
+          # Category indexes use data cached at root, not local remember state.
+          s=s.replace('private fun CategoryIndexChannel(container: WearContainer, topic: Boolean, onOpenCategory: (Datum) -> Unit, listState: ScalingLazyListState) {','private fun CategoryIndexChannel(container: WearContainer, topic: Boolean, onOpenCategory: (Datum) -> Unit, listState: ScalingLazyListState, session: ChannelHubSession) {',1)
+          old='''    var state by remember(topic) { mutableStateOf<LoadResult<List<Datum>>>(LoadResult.Loading) }
+              var retry by remember(topic) { mutableIntStateOf(0) }
+              LaunchedEffect(topic, retry) {
+                  state = container.networkMonitor.withRecovery {
+                      if (topic) {
+                          when (val result = container.repository.dataListFromUrl("/v6/page/dataList", listOf("url" to "V11_VERTICAL_TOPIC", "title" to "话题", "page" to "1"))) {
+                          is LoadResult.Success -> LoadResult.Success(result.value.firstOrNull()?.entities.orEmpty())
+                          is LoadResult.Error -> result
+                          LoadResult.Empty -> LoadResult.Empty
+                          LoadResult.Loading -> LoadResult.Loading
+                      }
+                  } else {
+                          container.repository.dataListFromUrl("/v6/product/categoryList")
+                      }
+                  }
+              }
+              val list = (state as? LoadResult.Success)?.value.orEmpty()'''
+          new='''    val retry = session.categoryRetry(topic)
+              LaunchedEffect(topic, retry) {
+                  if (session.categoryState(topic) == null) {
+                      session.setCategoryState(topic, LoadResult.Loading)
+                      try {
+                          val result = container.networkMonitor.withRecovery {
+                              if (topic) {
+                                  when (val response = container.repository.dataListFromUrl("/v6/page/dataList", listOf("url" to "V11_VERTICAL_TOPIC", "title" to "话题", "page" to "1"))) {
+                                      is LoadResult.Success -> LoadResult.Success(response.value.firstOrNull()?.entities.orEmpty())
+                                      is LoadResult.Error -> response
+                                      LoadResult.Empty -> LoadResult.Empty
+                                      LoadResult.Loading -> LoadResult.Loading
+                                  }
+                              } else container.repository.dataListFromUrl("/v6/product/categoryList")
+                          }
+                          session.setCategoryState(topic, result)
+                      } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                          session.setCategoryState(topic, null)
+                          throw cancelled
+                      } catch (failure: Exception) {
+                          session.setCategoryState(topic, LoadResult.Error(failure.message ?: "加载失败"))
+                      }
+                  }
+              }
+              val state = session.categoryState(topic) ?: LoadResult.Loading
+              val list = (state as? LoadResult.Success)?.value.orEmpty()'''
+          if old not in s: raise RuntimeError('CategoryIndex old state block not found')
+          s=s.replace(old,new,1)
+          s=s.replace('FilledTonalButton(onClick = { retry++ }, modifier = Modifier.fillMaxWidth()) { Text("重新加载") }','FilledTonalButton(onClick = { session.retryCategory(topic) }, modifier = Modifier.fillMaxWidth()) { Text("重新加载") }',1)
+          # Search tab input and result sessions are root-owned.
+          s=s.replace('''    listState: ScalingLazyListState,
+          ) {
+              var text by remember { mutableStateOf("") }
+              var keyword by remember { mutableStateOf<String?>(null) }
+              val submit = { val value = text.trim(); if (value.isNotEmpty()) { container.addHistory(value); keyword = value } }''','''    listState: ScalingLazyListState,
+              session: SearchChannelSession,
+          ) {
+              val text = session.text
+              val keyword = session.keyword
+              val submit = { val value = session.text.trim(); if (value.isNotEmpty()) { container.addHistory(value); session.keyword = value } }''',1)
+          s=s.replace('onValueChange = { text = it }','onValueChange = { session.text = it }',1)
+          s=s.replace('onClick = { text = word; keyword = word }','onClick = { session.text = word; session.keyword = word }',1)
+          s=s.replace('SearchResultsSection(container, value, onOpenFeed, onOpenUser, onOpenTarget)','SearchResultsSection(container, value, onOpenFeed, onOpenUser, onOpenTarget, session)',1)
+          old='''private fun SearchResultsSection(
+              container: WearContainer,
+              keyword: String,
+              onOpenFeed: (Datum) -> Unit,
+              onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+          ) {
+              Column(Modifier.fillMaxWidth()) {
+                  Text("搜索：$keyword", style = MaterialTheme.typography.titleSmall)
+                  SearchTypeButton(container, keyword, "动态", "feed", onOpenFeed, onOpenUser, onOpenTarget)
+                  SearchTypeButton(container, keyword, "数码", "product", onOpenFeed, onOpenUser, onOpenTarget)
+                  SearchTypeButton(container, keyword, "话题", "feedTopic", onOpenFeed, onOpenUser, onOpenTarget)
+                  SearchTypeButton(container, keyword, "用户", "user", onOpenFeed, onOpenUser, onOpenTarget)
+              }
+          }'''
+          new='''private fun SearchResultsSection(
+              container: WearContainer,
+              keyword: String,
+              onOpenFeed: (Datum) -> Unit,
+              onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+              session: SearchChannelSession,
+          ) {
+              Column(Modifier.fillMaxWidth()) {
+                  Text("搜索：$keyword", style = MaterialTheme.typography.titleSmall)
+                  SearchTypeButton(container, keyword, "动态", "feed", onOpenFeed, onOpenUser, onOpenTarget, session.resultSession(keyword, "feed"))
+                  SearchTypeButton(container, keyword, "数码", "product", onOpenFeed, onOpenUser, onOpenTarget, session.resultSession(keyword, "product"))
+                  SearchTypeButton(container, keyword, "话题", "feedTopic", onOpenFeed, onOpenUser, onOpenTarget, session.resultSession(keyword, "feedTopic"))
+                  SearchTypeButton(container, keyword, "用户", "user", onOpenFeed, onOpenUser, onOpenTarget, session.resultSession(keyword, "user"))
+              }
+          }'''
+          if old not in s: raise RuntimeError('SearchResultsSection mismatch')
+          s=s.replace(old,new,1)
+          start=s.index('private fun SearchTypeButton(')
+          end=s.index('\n@Composable\nprivate fun SearchResultCard',start)
+          old=s[start:end]
+          new='''private fun SearchTypeButton(
+              container: WearContainer,
+              keyword: String,
+              label: String,
+              type: String,
+              onOpenFeed: (Datum) -> Unit,
+              onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+              session: SearchTypeSession,
+          ) {
+              val opened = session.opened
+              val loading = session.loading
+              val results = session.results
+              val error = session.error
+              val retry = session.retry
+              Column(Modifier.fillMaxWidth()) {
+                  FilledTonalButton(onClick = {
+                      if (session.opened && (session.loading || (session.loaded && session.error == null))) return@FilledTonalButton
+                      session.opened = true
+                      session.error = null
+                      session.loaded = false
+                      session.retry++
+                  }, modifier = Modifier.fillMaxWidth()) { Text("$label 结果") }
+                  if (opened && !loading) {
+                      if (error != null) {
+                          Text(error, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                          FilledTonalButton(onClick = { session.error = null; session.loaded = false; session.retry++ }, modifier = Modifier.fillMaxWidth()) { Text("重试") }
+                      } else if (session.loaded && results.isEmpty()) {
+                          Text("没有找到相关内容", style = MaterialTheme.typography.labelSmall)
+                      } else results.forEach { item -> SearchResultCard(item, onOpenFeed, onOpenUser, onOpenTarget) }
+                  }
+                  if (opened && loading) PulsingText("加载中…")
+              }
+              LaunchedEffect(keyword, type, retry) {
+                  if (session.opened && !session.loaded && !session.loading) {
+                      session.loading = true
+                      try {
+                          when (val result = container.networkMonitor.withRecovery { container.repository.search(type, "all", "default", keyword, 0, null, null, Page()) }) {
+                              is LoadResult.Success -> { session.results = result.value.take(8); session.error = null }
+                              is LoadResult.Error -> session.error = result.message
+                              LoadResult.Empty -> { session.results = emptyList(); session.error = null }
+                              LoadResult.Loading -> Unit
+                          }
+                          session.loaded = true
+                      } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                          throw cancelled
+                      } catch (failure: Exception) {
+                          session.error = failure.message ?: "搜索失败"
+                          session.loaded = true
+                      } finally {
+                          session.loading = false
+                      }
+                  }
+              }
+          }
+          '''
+          s=s[:start]+new+s[end:]
+          # Category feed session signature and state fields.
+          old='''fun CategoryFeedScreen(
+              container: WearContainer,
+              category: Datum,
+              onOpenFeed: (Datum) -> Unit,
+              onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+          ) {
+              val title = category.title.orEmpty().ifBlank { "板块" }
+              val baseUrl = category.url.orEmpty().trim()
+              var activeUrl by remember(baseUrl) { mutableStateOf(baseUrl) }
+              var selectedSortUrl by remember(baseUrl) { mutableStateOf<String?>(null) }
+              val feed = remember(baseUrl, container.accountVersion) {
+                  container.newPagedFeed { page ->
+                      // The phone app requests config/sort cards here, then handles them in its list layer.
+                      container.repository.dataList(activeUrl, title, page, includeConfigCard = true)
+                  }
+              }'''
+          new='''fun CategoryFeedScreen(
+              container: WearContainer,
+              category: Datum,
+              session: CategoryFeedSession,
+              onOpenFeed: (Datum) -> Unit,
+              onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+          ) {
+              val title = session.title
+              val baseUrl = session.baseUrl
+              val activeUrl = session.activeUrl
+              val selectedSortUrl = session.selectedSortUrl
+              val feed = session.feed
+              LaunchedEffect(session, container.accountVersion) {
+                  if (session.accountVersion != container.accountVersion) {
+                      session.accountVersion = container.accountVersion
+                      session.activeUrl = session.baseUrl
+                      session.selectedSortUrl = null
+                      session.scrollIndex = 0
+                      session.scrollOffset = 0
+                      session.scrollAnchor = null
+                      feed.reset()
+                  }
+              }'''
+          if old not in s: raise RuntimeError('CategoryFeedScreen initializer mismatch')
+          s=s.replace(old,new,1)
+          s=s.replace('''            selectedSortUrl = selected.url
+                      val targetUrl = selected.url.orEmpty()
+                      if (targetUrl.isNotBlank() && targetUrl != activeUrl) {
+                          activeUrl = targetUrl
+                          feed.reset()
+                      }''','''            session.selectedSortUrl = selected.url
+                      val targetUrl = selected.url.orEmpty()
+                      if (targetUrl.isNotBlank() && targetUrl != session.activeUrl) {
+                          session.activeUrl = targetUrl
+                          feed.reset()
+                      }''',1)
+          # Restore and persist category viewport on all nested navigations.
+          old='''    val state = rememberScalingLazyListState()
+              PrefetchNearEnd(feed, state, visibleItems.size)
+          
+              ScreenScaffold(scrollState = state)'''
+          new='''    val state = rememberScalingLazyListState()
+              var viewportRestored by remember(session) { mutableStateOf(false) }
+              LaunchedEffect(session, feed.items.size, visibleItems.size) {
+                  if (!viewportRestored && (feed.items.isNotEmpty() || feed.ended || feed.error != null || session.scrollIndex == 0)) {
+                      if (feed.items.isNotEmpty() && session.scrollIndex > 0) {
+                          val contentStart = 1 + if (sortOptions.isNotEmpty()) 1 else 0
+                          val anchorIndex = session.scrollAnchor?.let { anchor ->
+                              visibleItems.indexOfFirst { (it.entityId ?: it.id) == anchor }.takeIf { it >= 0 }?.plus(contentStart)
+                          }
+                          state.scrollToItem((anchorIndex ?: session.scrollIndex).coerceIn(0, visibleItems.size + contentStart), session.scrollOffset)
+                      }
+                      viewportRestored = true
+                  }
+              }
+              LaunchedEffect(session, state, viewportRestored, visibleItems) {
+                  snapshotFlow { state.centerItemIndex to state.centerItemScrollOffset }
+                      .distinctUntilChanged()
+                      .collectLatest { (index, offset) ->
+                          delay(300L)
+                          if (viewportRestored && index >= 0) {
+                              session.scrollIndex = index
+                              session.scrollOffset = offset
+                              val contentStart = 1 + if (sortOptions.isNotEmpty()) 1 else 0
+                              session.scrollAnchor = visibleItems.getOrNull(index - contentStart)?.let { it.entityId ?: it.id }
+                          }
+                      }
+              }
+              fun saveViewport() {
+                  session.scrollIndex = state.centerItemIndex.coerceAtLeast(0)
+                  session.scrollOffset = state.centerItemScrollOffset
+                  val contentStart = 1 + if (sortOptions.isNotEmpty()) 1 else 0
+                  session.scrollAnchor = visibleItems.getOrNull(session.scrollIndex - contentStart)?.let { it.entityId ?: it.id }
+              }
+              PrefetchNearEnd(feed, state, visibleItems.size, enabled = viewportRestored)
+          
+              ScreenScaffold(scrollState = state)'''
+          if old not in s: raise RuntimeError('CategoryFeed state insertion point missing')
+          s=s.replace(old,new,1)
+          s=s.replace('''                                    if (nextUrl.isNotBlank() && nextUrl != activeUrl) {
+                                                  selectedSortUrl = nextUrl
+                                                  activeUrl = nextUrl
+                                                  feed.reset()
+                                              }''','''                                    if (nextUrl.isNotBlank() && nextUrl != session.activeUrl) {
+                                                  session.selectedSortUrl = nextUrl
+                                                  session.activeUrl = nextUrl
+                                                  feed.reset()
+                                              }''',1)
+          # Category-feed navigation clicks persist viewport.
+          s=s.replace('''                        onClick = { onOpenFeed(item) },
+                                  onUser = onOpenUser,
+                                  onTarget = onOpenTarget,''','''                        onClick = { saveViewport(); onOpenFeed(item) },
+                                  onUser = { uid -> saveViewport(); onOpenUser(uid) },
+                                  onTarget = { target -> saveViewport(); onOpenTarget(target) },''',1)
+          s=s.replace('''                        onClick = { onOpenTarget(item) },
+                                  modifier = Modifier.fillMaxWidth(),''','''                        onClick = { saveViewport(); onOpenTarget(item) },
+                                  modifier = Modifier.fillMaxWidth(),''',1)
+          s=s.replace('''                        onClick = { item.uid?.let(onOpenUser); Unit },
+                                  modifier = Modifier.fillMaxWidth(),''','''                        onClick = { saveViewport(); item.uid?.let(onOpenUser); Unit },
+                                  modifier = Modifier.fillMaxWidth(),''',1)
+          p.write_text(s)
+          
+          # Add cached My screen profile state and mine-list feed sessions.
+          p=pkg/'MoreScreens.kt'; s=p.read_text()
+          if 'class MeScreenSession {' not in s:
+              s=s.replace('@Composable\nfun MeScreen(','''class MeScreenSession {
+              var uid by mutableStateOf<String?>(null)
+              var accountVersion by mutableIntStateOf(-1)
+              var profile by mutableStateOf<Datum?>(null)
+              var profileError by mutableStateOf<String?>(null)
+          }
+          
+          @Composable
+          fun MeScreen(''',1)
+          s=s.replace('''    listState: ScalingLazyListState,
+          ) {
+              val account = container.account
+              var profile by remember(account?.uid) { mutableStateOf<Datum?>(null) }
+              var profileError by remember(account?.uid) { mutableStateOf<String?>(null) }''','''    listState: ScalingLazyListState,
+              session: MeScreenSession,
+          ) {
+              val account = container.account
+              val profile = session.profile
+              val profileError = session.profileError''',1)
+          s=s.replace('''    LaunchedEffect(account?.uid, container.accountVersion) {
+                  profile = null
+                  profileError = null
+                  val uid = account?.uid ?: return@LaunchedEffect
+                  try {
+                      val response = readApiObject(container.repository.profile(uid))
+                      profile = (response["data"] as? JsonObject)?.let(::Datum)
+                      if (profile == null) profileError = "暂时无法读取个人资料"
+                  } catch (e: CancellationException) {
+                      throw e
+                  } catch (e: Exception) {
+                      // The original public user-space endpoint is a safe fallback for the header.
+                      when (val fallback = container.repository.userSpace(uid)) {
+                          is LoadResult.Success -> profile = fallback.value
+                          is LoadResult.Error -> profileError = fallback.message
+                          LoadResult.Empty -> profileError = e.message ?: "暂时无法读取个人资料"
+                          LoadResult.Loading -> Unit
+                      }
+                  }
+              }''','''    LaunchedEffect(account?.uid, container.accountVersion) {
+                  val uid = account?.uid
+                  if (session.uid != uid || session.accountVersion != container.accountVersion) {
+                      session.uid = uid
+                      session.accountVersion = container.accountVersion
+                      session.profile = null
+                      session.profileError = null
+                  }
+                  if (uid == null || session.profile != null || session.profileError != null) return@LaunchedEffect
+                  try {
+                      val response = readApiObject(container.repository.profile(uid))
+                      session.profile = (response["data"] as? JsonObject)?.let(::Datum)
+                      if (session.profile == null) session.profileError = "暂时无法读取个人资料"
+                  } catch (e: CancellationException) {
+                      throw e
+                  } catch (e: Exception) {
+                      when (val fallback = container.repository.userSpace(uid)) {
+                          is LoadResult.Success -> session.profile = fallback.value
+                          is LoadResult.Error -> session.profileError = fallback.message
+                          LoadResult.Empty -> session.profileError = e.message ?: "暂时无法读取个人资料"
+                          LoadResult.Loading -> Unit
+                      }
+                  }
+              }''',1)
+          if 'class MineListSession {' not in s:
+              s=s.replace('@Composable\nfun MineListScreen(','''class MineListSession {
+              var replyTab by mutableIntStateOf(0)
+              var scrollIndex by mutableIntStateOf(0)
+              var scrollOffset by mutableIntStateOf(0)
+              private val feeds = linkedMapOf<String, PagedFeed>()
+              fun feed(key: String, create: () -> PagedFeed): PagedFeed {
+                  return feeds.getOrPut(key, create).also {
+                      while (feeds.size > 12) feeds.remove(feeds.keys.first())
+                  }
+              }
+          }
+          
+          @Composable
+          fun MineListScreen(''',1)
+          s=s.replace('''    onOpenList: (String, String?) -> Unit,
+          ) {
+              val uid = container.account?.uid.orEmpty()
+              var replyTab by remember(type) { mutableIntStateOf(0) }''','''    onOpenList: (String, String?) -> Unit,
+              session: MineListSession,
+          ) {
+              val uid = container.account?.uid.orEmpty()
+              val replyTab = session.replyTab''',1)
+          s=s.replace('''    val remoteList = remember(effectiveType, id, uid, container.accountVersion) {
+                  container.newPagedFeed { page ->''','''    val remoteList = remember(session, effectiveType, id, uid, container.accountVersion) {
+                  val feedKey = "$effectiveType:${id.orEmpty()}:$uid:${container.accountVersion}"
+                  session.feed(feedKey) { container.newPagedFeed { page ->''',1)
+          s=s.replace('''                else -> LoadResult.Empty
+                      }
+                  }
+              }
+              val context = LocalContext.current''','''                else -> LoadResult.Empty
+                      }
+                  } }
+              }
+              val context = LocalContext.current''',1)
+          s=s.replace('''    val state = rememberScalingLazyListState()
+              LaunchedEffect(remoteList, effectiveType) {
+                  if (effectiveType !in setOf("LOCAL_BACKUP", "LOCAL_FAVORITES", "BROWSE_HISTORY")) remoteList.loadNext()
+              }
+              ScreenScaffold(scrollState = state)''','''    val state = rememberScalingLazyListState()
+              var viewportRestored by remember(session) { mutableStateOf(false) }
+              LaunchedEffect(remoteList, effectiveType) {
+                  if (remoteList.loadedPages == 0 && effectiveType !in setOf("LOCAL_BACKUP", "LOCAL_FAVORITES", "BROWSE_HISTORY")) remoteList.loadNext()
+                  if (!viewportRestored) {
+                      withFrameNanos { }
+                      if (session.scrollIndex > 0) {
+                          val lastIndex = (state.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+                          state.scrollToItem(session.scrollIndex.coerceAtMost(lastIndex), session.scrollOffset)
+                      }
+                      viewportRestored = true
+                  }
+              }
+              LaunchedEffect(session, state, viewportRestored) {
+                  snapshotFlow { state.centerItemIndex to state.centerItemScrollOffset }
+                      .distinctUntilChanged()
+                      .collectLatest { (index, offset) ->
+                          delay(300L)
+                          if (viewportRestored) { session.scrollIndex = index.coerceAtLeast(0); session.scrollOffset = offset }
+                      }
+              }
+              fun saveViewport() {
+                  session.scrollIndex = state.centerItemIndex.coerceAtLeast(0)
+                  session.scrollOffset = state.centerItemScrollOffset
+              }
+              ScreenScaffold(scrollState = state)''',1)
+          s=s.replace('{ replyTab = 0 }','{ session.replyTab = 0 }').replace('{ replyTab = 1 }','{ session.replyTab = 1 }')
+          s=s.replace('''FeedCard(row, onClick = { onOpenFeed(row) }, onUser = onOpenUser, onTarget = onOpenTarget)''','''FeedCard(row, onClick = { saveViewport(); onOpenFeed(row) }, onUser = { uid -> saveViewport(); onOpenUser(uid) }, onTarget = { target -> saveViewport(); onOpenTarget(target) })''')
+          s=s.replace('''if (row.id != null) onOpenFeed(row)''','''if (row.id != null) { saveViewport(); onOpenFeed(row) }''')
+          # Save before user row navigation and collection sub-route push.
+          s=s.replace('''{ (row.authorUid ?: row.uid)?.let(onOpenUser) }''','''{ saveViewport(); (row.authorUid ?: row.uid)?.let(onOpenUser) }''')
+          s=s.replace('''onOpenList("COLLECTION_ITEMS", collection.id)''','''saveViewport(); onOpenList("COLLECTION_ITEMS", collection.id)''')
+          # Add the coroutine/flow APIs used by saved viewport collectors.
+          for old,new in [
+           ('import androidx.compose.runtime.setValue\n','import androidx.compose.runtime.setValue\nimport androidx.compose.runtime.snapshotFlow\nimport androidx.compose.runtime.withFrameNanos\n'),
+           ('import kotlinx.coroutines.CancellationException\n','import kotlinx.coroutines.CancellationException\nimport kotlinx.coroutines.delay\nimport kotlinx.coroutines.flow.collectLatest\nimport kotlinx.coroutines.flow.distinctUntilChanged\n')]:
+              if new not in s: s=s.replace(old,new,1)
+          s=s.replace('const val WEAR_VERSION_NAME = "0.6.11"','const val WEAR_VERSION_NAME = "0.6.12"',1)
+          s=s.replace('"酷安 Wear OS 版 0.6.11"','"酷安 Wear OS 版 0.6.12"',1)
+          p.write_text(s)
+          
+          # Replace the old decorative sheen with stronger, contained Gaussian blur layers.
+          p=pkg/'Components.kt'; s=p.read_text()
+          old='''/** Lightweight frosted card. Uses a gradient and thin highlight rather than live backdrop blur. */
+          @Composable
+          fun GlassCard(
+              onClick: () -> Unit,
+              modifier: Modifier = Modifier,
+              content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+          ) {
+              val shape = RoundedCornerShape(17.dp)
+              val base = MaterialTheme.colorScheme.surfaceContainerHigh
+              Column(
+                  modifier = modifier
+                      .clip(shape)
+                      .background(Brush.verticalGradient(listOf(
+                          base.copy(alpha = 0.88f),
+                          MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.76f),
+                          MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.84f),
+                      )))
+                      .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.30f), shape)
+                      .clickable(onClick = onClick)
+                      .padding(10.dp),
+                  content = content,
+              )
+          }'''
+          new='''/** Gaussian-frosted material. Blur is isolated to the background layer, not text/images. */
+          @Composable
+          fun GlassCard(
+              onClick: () -> Unit,
+              modifier: Modifier = Modifier,
+              content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+          ) {
+              val shape = RoundedCornerShape(17.dp)
+              val base = MaterialTheme.colorScheme.surfaceContainerHigh
+              Box(modifier = modifier.clip(shape)) {
+                  // Compose blur uses a platform Gaussian RenderEffect on Wear OS API 31+.
+                  Box(Modifier.matchParentSize()) {
+                      // One static GPU blur layer per card keeps the glass visible without stacking effects.
+                      Box(Modifier.align(Alignment.TopEnd).size(124.dp)
+                          .background(Brush.radialGradient(listOf(
+                              Color.White.copy(alpha = 0.72f),
+                              Brand.copy(alpha = 0.34f),
+                              MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
+                              Color.Transparent,
+                          )), CircleShape)
+                          .blur(24.dp))
+                  }
+                  Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(
+                      base.copy(alpha = 0.36f),
+                      MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.28f),
+                      MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.34f),
+                  ))))
+                  Column(Modifier.fillMaxWidth()
+                      .border(1.dp, Color.White.copy(alpha = 0.24f), shape)
+                      .border(0.7.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.30f), shape)
+                      .clickable(onClick = onClick)
+                      .padding(10.dp), content = content)
+              }
+          }'''
+          if old in s: s=s.replace(old,new,1)
+          elif '.blur(24.dp)' not in s: raise RuntimeError('GlassCard old/new implementation not found')
+          p.write_text(s)
+          
+          p=pkg/'ChannelScreens.kt'; s=p.read_text()
+          old='''            androidx.compose.foundation.layout.Box(
+                          modifier = Modifier.align(Alignment.TopStart).fillMaxWidth(0.72f).heightIn(min = 14.dp)
+                              .background(Brush.horizontalGradient(listOf(Brand.copy(alpha = 0.20f), Color.White.copy(alpha = 0.04f), Color.Transparent)), RoundedCornerShape(24.dp))
+                              .blur(4.dp),
+                      )'''
+          new='''            androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
+                          androidx.compose.foundation.layout.Box(
+                              modifier = Modifier.align(Alignment.Center).fillMaxWidth(0.88f).heightIn(min = 36.dp)
+                                  .background(Brush.radialGradient(listOf(
+                                      Brand.copy(alpha = 0.58f),
+                                      Color.White.copy(alpha = 0.34f),
+                                      MaterialTheme.colorScheme.primary.copy(alpha = 0.20f),
+                                      Color.Transparent,
+                                  )), RoundedCornerShape(50))
+                                  .blur(22.dp),
+                          )
+                      }'''
+          if old in s:
+              s=s.replace(old,new,1)
+          elif '.blur(24.dp)' not in s:
+              raise RuntimeError('Old/new rail Gaussian layer not found')
+          s=s.replace('''                        MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.76f),
+                                  MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.58f),
+                                  MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.64f),''','''                        MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.46f),
+                                  MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.34f),
+                                  MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.40f),''',1)
+          s=s.replace('''                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.30f), glassShape)''','''                    .border(1.dp, Color.White.copy(alpha = 0.28f), glassShape)
+                              .border(0.6.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.26f), glassShape)''',1)
+          p.write_text(s)
+          
+          # Version 0.6.12.
+          p=Path('wear/build.gradle.kts'); s=p.read_text()
+          s=s.replace('versionCode = 2026103116','versionCode = 2026103117',1).replace('versionName = "0.6.11"','versionName = "0.6.12"',1)
+          p.write_text(s)
+          
+          # Root owns channel/category/mine-list sessions; routes only receive stable session handles.
+          p=pkg/'WearApp.kt'; a=p.read_text()
+          a=a.replace('''    val categories = HashMap<String, Datum>()
+              val threads''','''    val categories = HashMap<String, Datum>()
+              val categorySessions = LinkedHashMap<String, CategoryFeedSession>()
+              val mineListSessions = LinkedHashMap<String, MineListSession>()
+              val threads''',1)
+          a=a.replace('''            val retainedChannelFeeds = remember { mutableMapOf<String, PagedFeed>() }
+          ''','''            val retainedChannelFeeds = remember { mutableMapOf<String, PagedFeed>() }
+                      val channelHubSession = remember { ChannelHubSession() }
+          ''',1)
+          a=a.replace('''                    args.categories[key] = item
+                              navController.navigate("category/$key")''','''                    args.categories[key] = item
+                              args.categorySessions[key] = CategoryFeedSession(container, item)
+                              while (args.categorySessions.size > 12) {
+                                  val oldest = args.categorySessions.keys.first()
+                                  args.categorySessions.remove(oldest)
+                                  args.categories.remove(oldest)
+                              }
+                              navController.navigate("category/$key")''',1)
+          a=a.replace('''                fun openMineList(type: String, id: String? = null) {
+                              saveHomeNavigationState()
+                              navController.navigate("mine-list/$type/${id ?: "_"}")
+                          }''','''                fun openMineList(type: String, id: String? = null) {
+                              saveHomeNavigationState()
+                              val key = "$type/${id ?: "_"}"
+                              args.mineListSessions.getOrPut(key) { MineListSession() }
+                              while (args.mineListSessions.size > 12) args.mineListSessions.remove(args.mineListSessions.keys.first())
+                              navController.navigate("mine-list/$key")
+                          }''',1)
+          a=a.replace('''                            retainedFeeds = retainedChannelFeeds,
+                                  )''','''                            retainedFeeds = retainedChannelFeeds,
+                                      hubSession = channelHubSession,
+                                  )''',1)
+          a=a.replace('''                        args.categories[key]?.let { category ->
+                                      CategoryFeedScreen(container, category, ::openFeed, { uid -> navController.navigate("user/$uid") }, ::openTarget)
+                                  }''','''                        args.categories[key]?.let { category ->
+                                      val session = args.categorySessions.getOrPut(key) { CategoryFeedSession(container, category) }
+                                      CategoryFeedScreen(container, category, session, ::openFeed, { uid -> navController.navigate("user/$uid") }, ::openTarget)
+                                  }''',1)
+          a=a.replace('''                            listState = channelListStates[6],
+                                  )''','''                            listState = channelListStates[6],
+                                      session = channelHubSession.me,
+                                  )''',1)
+          a=a.replace('''                        MineListScreen(
+                                      container = container,
+                                      type = type,
+                                      id = id,''','''                        val sessionKey = "$type/${entry.arguments?.getString("id") ?: "_"}"
+                                  val mineSession = args.mineListSessions.getOrPut(sessionKey) { MineListSession() }
+                                  MineListScreen(
+                                      container = container,
+                                      type = type,
+                                      id = id,''',1)
+          a=a.replace('''                            onOpenList = ::openMineList,
+                                  )''','''                            onOpenList = ::openMineList,
+                                      session = mineSession,
+                                  )''',1)
+          p.write_text(a)
+          
+          print('0.6.12 all-channel sessions, category route cache, mine-list cache and Gaussian materials applied')
+          PATCH_EOF
+          cat > /tmp/patch_wear_0612_routes.py <<'PATCH_EOF'
+          from pathlib import Path
+          import re
+          pkg = Path('wear/src/main/kotlin/com/zailinn/c001apk/wear')
+          
+          # User profiles retain the loaded profile, user-feed PagedFeed and viewport.
+          p = pkg / 'DetailScreens.kt'
+          d = p.read_text()
+          if 'class UserScreenSession(' not in d:
+              model = """class UserScreenSession(container: WearContainer, val uid: String) {
+              var info by mutableStateOf<Datum?>(null)
+              var failure by mutableStateOf<String?>(null)
+              var notice by mutableStateOf<String?>(null)
+              var accountVersion by mutableIntStateOf(container.accountVersion)
+              var scrollIndex by mutableIntStateOf(0)
+              var scrollOffset by mutableIntStateOf(0)
+              val feeds = container.newPagedFeed { page -> container.repository.userFeed(uid, page) }
+          }
+          
+          """
+              if '@Composable\nfun UserScreen(' not in d:
+                  raise RuntimeError('UserScreen insertion point missing')
+              d = d.replace('@Composable\nfun UserScreen(', model + '@Composable\nfun UserScreen(', 1)
+          old = """    onOpenTarget: (Datum) -> Unit,
+              onImages: (List<String>, Int) -> Unit,
+          ) {
+              var info by remember(uid) { mutableStateOf<Datum?>(null) }
+              var failure by remember(uid) { mutableStateOf<String?>(null) }
+              var notice by remember(uid) { mutableStateOf<String?>(null) }
+              val scope = rememberCoroutineScope()
+          
+              LaunchedEffect(uid) {
+                  when (val result = container.repository.userSpace(uid)) {
+                      is LoadResult.Success -> info = result.value
+                      is LoadResult.Error -> failure = result.message
+                      else -> Unit
+                  }
+              }
+              val feeds = remember(uid, container.accountVersion) {
+                  container.newPagedFeed { page -> container.repository.userFeed(uid, page) }
+              }
+              val cards = remember(feeds.items) { container.visibleFeeds(feeds.items) }
+              val listState = rememberScalingLazyListState()"""
+          new = """    onOpenTarget: (Datum) -> Unit,
+              onImages: (List<String>, Int) -> Unit,
+              session: UserScreenSession,
+          ) {
+              val info = session.info
+              val failure = session.failure
+              val notice = session.notice
+              val scope = rememberCoroutineScope()
+          
+              LaunchedEffect(uid, container.accountVersion) {
+                  if (session.accountVersion != container.accountVersion) {
+                      session.accountVersion = container.accountVersion
+                      session.info = null
+                      session.failure = null
+                      session.feeds.reset()
+                  }
+                  if (session.info == null && session.failure == null) {
+                      when (val result = container.networkMonitor.withRecovery { container.repository.userSpace(uid) }) {
+                          is LoadResult.Success -> session.info = result.value
+                          is LoadResult.Error -> session.failure = result.message
+                          else -> Unit
+                      }
+                  }
+              }
+              val feeds = session.feeds
+              val cards = remember(feeds.items, container.settingsRevision) { container.visibleFeeds(feeds.items) }
+              val listState = rememberScalingLazyListState()
+              var viewportRestored by remember(session) { mutableStateOf(false) }
+              LaunchedEffect(session, info, feeds.items.size) {
+                  if (!viewportRestored && info != null) {
+                      withFrameNanos { }
+                      if (session.scrollIndex > 0) {
+                          val last = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+                          listState.scrollToItem(session.scrollIndex.coerceAtMost(last), session.scrollOffset)
+                      }
+                      viewportRestored = true
+                  }
+              }
+              LaunchedEffect(session, listState, viewportRestored) {
+                  snapshotFlow { listState.centerItemIndex to listState.centerItemScrollOffset }
+                      .distinctUntilChanged().collectLatest { (index, offset) ->
+                          delay(300L)
+                          if (viewportRestored) { session.scrollIndex = index.coerceAtLeast(0); session.scrollOffset = offset }
+                      }
+              }
+              fun saveViewport() {
+                  session.scrollIndex = listState.centerItemIndex.coerceAtLeast(0)
+                  session.scrollOffset = listState.centerItemScrollOffset
+              }"""
+          if old in d:
+              d = d.replace(old, new, 1)
+          elif 'session: UserScreenSession' not in d:
+              raise RuntimeError('UserScreen state replacement target not found')
+          d = d.replace(
+              'FeedCard(feedItem, onClick = { onOpenFeed(feedItem) }, onUser = onOpenUser, onTarget = onOpenTarget)',
+              'FeedCard(feedItem, onClick = { saveViewport(); onOpenFeed(feedItem) }, onUser = { nextUid -> saveViewport(); onOpenUser(nextUid) }, onTarget = { target -> saveViewport(); onOpenTarget(target) })',
+              1,
+          )
+          for imp, after in [
+              ('import androidx.compose.runtime.mutableIntStateOf\n', 'import androidx.compose.runtime.mutableStateOf\n'),
+              ('import androidx.compose.runtime.snapshotFlow\n', 'import androidx.compose.runtime.setValue\n'),
+              ('import androidx.compose.runtime.withFrameNanos\n', 'import androidx.compose.runtime.snapshotFlow\n'),
+              ('import kotlinx.coroutines.delay\n', 'import kotlinx.coroutines.CancellationException\n'),
+              ('import kotlinx.coroutines.flow.collectLatest\n', 'import kotlinx.coroutines.delay\n'),
+              ('import kotlinx.coroutines.flow.distinctUntilChanged\n', 'import kotlinx.coroutines.flow.collectLatest\n'),
+          ]:
+              if imp not in d:
+                  if after not in d:
+                      raise RuntimeError(f'DetailScreens import anchor missing: {after.strip()}')
+                  d = d.replace(after, after + imp, 1)
+          # All UserScreen mutations update the retained model, not immutable render snapshots.
+          user_start = d.index('fun UserScreen(')
+          user_end = d.find('\n@Composable\nfun ', user_start + 1)
+          if user_end < 0: user_end = len(d)
+          user_body = d[user_start:user_end]
+          user_body = user_body.replace('notice = "登录后才能关注"', 'session.notice = "登录后才能关注"')
+          user_body = user_body.replace('info = current.with("isFollow", result.dataText?.toIntOrNull() ?: if (following) 0 else 1)', 'session.info = current.with("isFollow", result.dataText?.toIntOrNull() ?: if (following) 0 else 1)')
+          user_body = user_body.replace('notice = null', 'session.notice = null')
+          user_body = user_body.replace('notice = ApiFailure.from(e).message', 'session.notice = ApiFailure.from(e).message')
+          d = d[:user_start] + user_body + d[user_end:]
+          p.write_text(d)
+          
+          # Target/detail board retains metadata, paged posts and viewport.
+          p = pkg / 'TargetScreen.kt'
+          t = p.read_text()
+          if 'class TargetScreenSession(' not in t:
+              model = """class TargetScreenSession(val target: WearTarget) {
+              var info by mutableStateOf<Datum?>(null)
+              var failure by mutableStateOf<String?>(null)
+              var retry by mutableIntStateOf(0)
+              var scrollIndex by mutableIntStateOf(0)
+              var scrollOffset by mutableIntStateOf(0)
+              private var posts: PagedFeed? = null
+              private var postsKey: String? = null
+              fun feed(container: WearContainer, data: Datum): PagedFeed {
+                  val isProduct = target.id != null || data.entityType == "product"
+                  val title = data.title ?: target.tag.orEmpty()
+                  val key = "$title|$isProduct|${container.accountVersion}"
+                  if (posts == null || postsKey != key) {
+                      postsKey = key
+                      posts = container.newPagedFeed { page ->
+                          container.repository.search(
+                              type = "feed", feedType = "all", sort = "default", keyword = title,
+                              isStrict = 0, pageType = if (isProduct) "product_phone" else "tag",
+                              pageParam = if (isProduct) target.id else title, page = page,
+                          )
+                      }
+                  }
+                  return posts!!
+              }
+          }
+          
+          """
+              if '@Composable\nfun TargetScreen(' not in t:
+                  raise RuntimeError('TargetScreen insertion point missing')
+              t = t.replace('@Composable\nfun TargetScreen(', model + '@Composable\nfun TargetScreen(', 1)
+          old = """    onOpenFeed: (Datum) -> Unit,
+              onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+          ) {
+              var info by remember(target) { mutableStateOf<Datum?>(null) }
+              var failure by remember(target) { mutableStateOf<String?>(null) }
+              var retry by remember(target) { mutableStateOf(0) }
+              LaunchedEffect(target, retry) {
+                  info = null
+                  failure = null
+                  when (val result = container.networkMonitor.withRecovery { container.repository.topicDetail(target.tag, target.id) }) {
+                      is LoadResult.Success -> info = result.value
+                      is LoadResult.Error -> failure = result.message
+                      LoadResult.Empty -> failure = "暂时没有这个板块的信息"
+                      LoadResult.Loading -> Unit
+                  }
+              }
+          
+              val data = info
+              val isProduct = target.id != null || data?.entityType == "product"
+              val title = data?.title?.takeIf { it.isNotBlank() } ?: target.tag.orEmpty().ifBlank { "机型/话题" }
+              val posts = remember(target, data?.title, container.accountVersion) {
+                  container.newPagedFeed { page ->
+                      val queryTitle = data?.title ?: target.tag.orEmpty()
+                      container.repository.search(
+                          type = "feed",
+                          feedType = "all",
+                          sort = "default",
+                          keyword = queryTitle,
+                          isStrict = 0,
+                          pageType = if (isProduct) "product_phone" else "tag",
+                          pageParam = if (isProduct) target.id else queryTitle,
+                          page = page,
+                      )
+                  }
+              }
+              LaunchedEffect(posts, data) {
+                  if (data != null) posts.loadNext()
+              }
+              val cards = remember(posts.items) { container.visibleFeeds(posts.items) }
+              val listState = rememberScalingLazyListState()"""
+          new = """    onOpenFeed: (Datum) -> Unit,
+              onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+              session: TargetScreenSession,
+          ) {
+              val info = session.info
+              val failure = session.failure
+              val retry = session.retry
+              LaunchedEffect(target, retry, container.accountVersion) {
+                  if (session.info == null && session.failure == null) {
+                      when (val result = container.networkMonitor.withRecovery { container.repository.topicDetail(target.tag, target.id) }) {
+                          is LoadResult.Success -> session.info = result.value
+                          is LoadResult.Error -> session.failure = result.message
+                          LoadResult.Empty -> session.failure = "暂时没有这个板块的信息"
+                          LoadResult.Loading -> Unit
+                      }
+                  }
+              }
+          
+              val data = info
+              val isProduct = target.id != null || data?.entityType == "product"
+              val title = data?.title?.takeIf { it.isNotBlank() } ?: target.tag.orEmpty().ifBlank { "机型/话题" }
+              val posts = if (data != null) session.feed(container, data) else null
+              LaunchedEffect(posts, data) {
+                  if (data != null && posts != null && posts.loadedPages == 0) posts.loadNext()
+              }
+              val cards = remember(posts?.items, container.settingsRevision) { posts?.items?.let(container::visibleFeeds).orEmpty() }
+              val listState = rememberScalingLazyListState()
+              var viewportRestored by remember(session) { mutableStateOf(false) }
+              LaunchedEffect(session, data, posts?.items?.size) {
+                  if (!viewportRestored && data != null) {
+                      withFrameNanos { }
+                      if (session.scrollIndex > 0) {
+                          val last = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+                          listState.scrollToItem(session.scrollIndex.coerceAtMost(last), session.scrollOffset)
+                      }
+                      viewportRestored = true
+                  }
+              }
+              LaunchedEffect(session, listState, viewportRestored) {
+                  snapshotFlow { listState.centerItemIndex to listState.centerItemScrollOffset }
+                      .distinctUntilChanged().collectLatest { (index, offset) ->
+                          delay(300L)
+                          if (viewportRestored) { session.scrollIndex = index.coerceAtLeast(0); session.scrollOffset = offset }
+                      }
+              }
+              fun saveViewport() {
+                  session.scrollIndex = listState.centerItemIndex.coerceAtLeast(0)
+                  session.scrollOffset = listState.centerItemScrollOffset
+              }"""
+          if old in t:
+              t = t.replace(old, new, 1)
+          elif 'session: TargetScreenSession' not in t:
+              raise RuntimeError('TargetScreen state replacement target not found')
+          t = t.replace('PrefetchWhenNearEnd(posts, listState, cards.size)', 'posts?.let { PrefetchWhenNearEnd(it, listState, cards.size) }', 1)
+          t = t.replace('onClick = { retry++ }', 'onClick = { session.failure = null; session.retry++ }', 1)
+          t = t.replace(
+              'FeedCard(post, onClick = { onOpenFeed(post) }, onUser = onOpenUser, onTarget = onOpenTarget)',
+              'FeedCard(post, onClick = { saveViewport(); onOpenFeed(post) }, onUser = { uid -> saveViewport(); onOpenUser(uid) }, onTarget = { item -> saveViewport(); onOpenTarget(item) })',
+              1,
+          )
+          t = t.replace(
+              'item { ListFooter(posts, emptyText = if (cards.isEmpty()) "暂时没有相关动态" else "没有更多了") }',
+              'posts?.let { feed -> item { ListFooter(feed, emptyText = if (cards.isEmpty()) "暂时没有相关动态" else "没有更多了") } }',
+              1,
+          )
+          for imp, after in [
+              ('import androidx.compose.runtime.mutableIntStateOf\n', 'import androidx.compose.runtime.mutableStateOf\n'),
+              ('import androidx.compose.runtime.snapshotFlow\n', 'import androidx.compose.runtime.setValue\n'),
+              ('import androidx.compose.runtime.withFrameNanos\n', 'import androidx.compose.runtime.snapshotFlow\n'),
+              ('import kotlinx.coroutines.delay\n', 'import com.zailinn.c001apk.core.model.LoadResult\n'),
+              ('import kotlinx.coroutines.flow.collectLatest\n', 'import kotlinx.coroutines.delay\n'),
+              ('import kotlinx.coroutines.flow.distinctUntilChanged\n', 'import kotlinx.coroutines.flow.collectLatest\n'),
+          ]:
+              if imp not in t:
+                  if after not in t:
+                      raise RuntimeError(f'TargetScreen import anchor missing: {after.strip()}')
+                  t = t.replace(after, after + imp, 1)
+          p.write_text(t)
+          
+          # Settings detail tabs also preserve position when navigating into a nested list.
+          p = pkg / 'MoreScreens.kt'
+          m = p.read_text()
+          if 'class SettingsDetailSession {' not in m:
+              m = m.replace('@Composable\nfun SettingsDetailScreen(', '''class SettingsDetailSession {
+              var scrollIndex by mutableIntStateOf(0)
+              var scrollOffset by mutableIntStateOf(0)
+          }
+          
+          @Composable
+          fun SettingsDetailScreen(''', 1)
+          old_sig = 'fun SettingsDetailScreen(container: WearContainer, section: String, onOpenList: (String, String?) -> Unit, onBack: () -> Unit) {'
+          new_sig = 'fun SettingsDetailScreen(container: WearContainer, section: String, onOpenList: (String, String?) -> Unit, onBack: () -> Unit, session: SettingsDetailSession) {'
+          if old_sig in m:
+              m = m.replace(old_sig, new_sig, 1)
+          old_state = '''              val listState = rememberScalingLazyListState()
+                        var words by remember(section, revision)'''
+          new_state = '''              val listState = rememberScalingLazyListState()
+                        var viewportRestored by remember(session) { mutableStateOf(false) }
+                        LaunchedEffect(session) {
+                            withFrameNanos { }
+                            if (session.scrollIndex > 0) {
+                                val last = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+                                listState.scrollToItem(session.scrollIndex.coerceAtMost(last), session.scrollOffset)
+                            }
+                            viewportRestored = true
+                        }
+                        LaunchedEffect(session, listState, viewportRestored) {
+                            snapshotFlow { listState.centerItemIndex to listState.centerItemScrollOffset }
+                                .distinctUntilChanged().collectLatest { (index, offset) ->
+                                    delay(300L)
+                                    if (viewportRestored) { session.scrollIndex = index.coerceAtLeast(0); session.scrollOffset = offset }
+                                }
+                        }
+                        var words by remember(section, revision)'''
+          if old_state in m:
+              m = m.replace(old_state, new_state, 1)
+          for imp, after in [
+              ('import androidx.compose.runtime.snapshotFlow\n', 'import androidx.compose.runtime.setValue\n'),
+              ('import androidx.compose.runtime.withFrameNanos\n', 'import androidx.compose.runtime.snapshotFlow\n'),
+              ('import kotlinx.coroutines.delay\n', 'import kotlinx.coroutines.CancellationException\n'),
+              ('import kotlinx.coroutines.flow.collectLatest\n', 'import kotlinx.coroutines.delay\n'),
+              ('import kotlinx.coroutines.flow.distinctUntilChanged\n', 'import kotlinx.coroutines.flow.collectLatest\n'),
+          ]:
+              if imp not in m:
+                  if after not in m:
+                      raise RuntimeError(f'MoreScreens import anchor missing: {after.strip()}')
+                  m = m.replace(after, after + imp, 1)
+          # Restore/save settings-page viewport. Keep the blur and list content itself out of the snapshot loop.
+          settings_start = m.index('fun SettingsDetailScreen(')
+          settings_end = m.index('\nclass MineListSession', settings_start)
+          settings_body = m[settings_start:settings_end]
+          state_anchor = '    val listState = rememberScalingLazyListState()\n'
+          state_block = '''    val listState = rememberScalingLazyListState()
+              var viewportRestored by remember(session) { mutableStateOf(false) }
+              LaunchedEffect(session, listState) {
+                  withFrameNanos { }
+                  if (session.scrollIndex > 0) {
+                      val last = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+                      listState.scrollToItem(session.scrollIndex.coerceAtMost(last), session.scrollOffset)
+                  }
+                  viewportRestored = true
+              }
+              LaunchedEffect(session, listState, viewportRestored) {
+                  snapshotFlow { listState.centerItemIndex to listState.centerItemScrollOffset }
+                      .distinctUntilChanged().collectLatest { (index, offset) ->
+                          delay(300L)
+                          if (viewportRestored) { session.scrollIndex = index.coerceAtLeast(0); session.scrollOffset = offset }
+                      }
+              }
+              fun saveSettingsViewport() {
+                  session.scrollIndex = listState.centerItemIndex.coerceAtLeast(0)
+                  session.scrollOffset = listState.centerItemScrollOffset
+              }
+              val openSettingsList: (String, String?) -> Unit = { type, id -> saveSettingsViewport(); onOpenList(type, id) }
+          '''
+          if 'saveSettingsViewport()' not in settings_body:
+              if state_anchor not in settings_body: raise RuntimeError('Settings listState anchor missing')
+              settings_body = settings_body.replace(state_anchor,state_block,1)
+          settings_body = settings_body.replace('onOpenList("LOCAL_BACKUP", null)', 'openSettingsList("LOCAL_BACKUP", null)')
+          settings_body = settings_body.replace('onOpenList("LOCAL_FAVORITES", null)', 'openSettingsList("LOCAL_FAVORITES", null)')
+          settings_body = settings_body.replace('onOpenList("CLOUD_COLLECTIONS", null)', 'openSettingsList("CLOUD_COLLECTIONS", null)')
+          m = m[:settings_start] + settings_body + m[settings_end:]
+          p.write_text(m)
+          
+          # Root NavArgs and route wiring. Keep every non-home screen's data owner above NavHost.
+          p = pkg / 'WearApp.kt'
+          a = p.read_text()
+          for old, new in [
+              ('    val targets = LinkedHashMap<String, WearTarget>()\n', '    val targets = LinkedHashMap<String, WearTarget>()\n    val targetSessions = LinkedHashMap<String, TargetScreenSession>()\n'),
+              ('    val categories = LinkedHashMap<String, Datum>()\n', '    val categories = LinkedHashMap<String, Datum>()\n    val categorySessions = LinkedHashMap<String, CategoryFeedSession>()\n'),
+              ('    val mineListSessions = LinkedHashMap<String, MineListSession>()\n', '    val mineListSessions = LinkedHashMap<String, MineListSession>()\n    val userSessions = LinkedHashMap<String, UserScreenSession>()\n    val settingsSessions = LinkedHashMap<String, SettingsDetailSession>()\n'),
+          ]:
+              if new not in a:
+                  # Upgrade any existing earlier HashMap declaration to insertion-order cache.
+                  if old.replace('LinkedHashMap', 'HashMap') in a and 'Sessions' in new:
+                      a = a.replace(old.replace('LinkedHashMap', 'HashMap'), new, 1)
+                      continue
+                  if old not in a:
+                      raise RuntimeError(f'NavArgs insertion point missing: {old.strip()}')
+                  a = a.replace(old, new, 1)
+          
+          # Ensure the existing root channel cache is connected to the shared hub session.
+          if 'val channelHubSession = remember { ChannelHubSession() }' not in a:
+              anchor = '            val retainedChannelFeeds = remember { mutableMapOf<String, PagedFeed>() }\n'
+              if anchor not in a: raise RuntimeError('Root channel cache anchor missing')
+              a = a.replace(anchor, anchor + '            val channelHubSession = remember { ChannelHubSession() }\n', 1)
+          if 'hubSession = channelHubSession' not in a:
+              a = a.replace('''                            retainedFeeds = retainedChannelFeeds,
+                                  )''', '''                            retainedFeeds = retainedChannelFeeds,
+                                      hubSession = channelHubSession,
+                                  )''', 1)
+          
+          # Store a session alongside each target/category route payload before navigating.
+          if 'args.targetSessions[key] = TargetScreenSession(target)' not in a:
+              old = '                    args.targets[key] = target\n'
+              if old not in a: raise RuntimeError('openTarget payload anchor missing')
+              a = a.replace(old, old + '                    args.targetSessions[key] = TargetScreenSession(target)\n', 1)
+          if 'args.categorySessions[key] = CategoryFeedSession(container, item)' not in a:
+              old = '                    args.categories[key] = item\n'
+              if old not in a: raise RuntimeError('openCategory payload anchor missing')
+              a = a.replace(old, old + '                    args.categorySessions[key] = CategoryFeedSession(container, item)\n', 1)
+          
+          # Replace route blocks by their boundaries; this avoids fragile matching inside nested lambdas.
+          def replace_route(source: str, start: str, end: str, replacement: str) -> str:
+              i = source.index(start)
+              j = source.index(end, i)
+              return source[:i] + replacement + source[j:]
+          
+          a = replace_route(a,
+              '                    composable("user/{uid}")',
+              '                    composable("target/{key}")',
+          '''                    composable("user/{uid}") { entry ->
+                                  val uid = entry.arguments?.getString("uid").orEmpty()
+                                  val userSession = args.userSessions.getOrPut(uid) { UserScreenSession(container, uid) }.also {
+                                      while (args.userSessions.size > 16) args.userSessions.remove(args.userSessions.keys.first())
+                                  }
+                                  UserScreen(
+                                      container = container,
+                                      uid = uid,
+                                      onOpenFeed = ::openFeed,
+                                      onOpenUser = { userId -> if (userId != uid) navController.navigate("user/$userId") },
+                                      onOpenTarget = ::openTarget,
+                                      onImages = ::openImages,
+                                      session = userSession,
+                                  )
+                              }
+          ''')
+          
+          a = replace_route(a,
+              '                    composable("target/{key}")',
+              '                    composable("category/{key}")',
+          '''                    composable("target/{key}") { entry ->
+                                  val key = entry.arguments?.getString("key").orEmpty()
+                                  args.targets[key]?.let { target ->
+                                      val targetSession = args.targetSessions.getOrPut(key) { TargetScreenSession(target) }.also {
+                                          while (args.targetSessions.size > 16) args.targetSessions.remove(args.targetSessions.keys.first())
+                                      }
+                                      TargetScreen(container, target, ::openFeed, { uid -> navController.navigate("user/$uid") }, ::openTarget, targetSession)
+                                  }
+                              }
+          ''')
+          
+          a = replace_route(a,
+              '                    composable("category/{key}")',
+              '                    composable("thread/{key}")',
+          '''                    composable("category/{key}") { entry ->
+                                  val key = entry.arguments?.getString("key").orEmpty()
+                                  args.categories[key]?.let { category ->
+                                      val categorySession = args.categorySessions.getOrPut(key) { CategoryFeedSession(container, category) }
+                                      CategoryFeedScreen(container, category, categorySession, ::openFeed, { uid -> navController.navigate("user/$uid") }, ::openTarget)
+                                  }
+                              }
+          ''')
+          
+          # Keep the explicit/legacy Me route backed by the same profile session as the home tab.
+          start = '                    composable("me")'
+          end = '                    composable("settings")'
+          me_block = a[a.index(start):a.index(end,a.index(start))]
+          if 'session = channelHubSession.me' not in me_block:
+              me_block = me_block.replace('                            listState = channelListStates[6],\n', '                            listState = channelListStates[6],\n                            session = channelHubSession.me,\n', 1)
+              a = replace_route(a, start, end, me_block)
+          
+          # Keep Settings detail scroll position in a root-owned session.
+          a = replace_route(a,
+              '                    composable("settings/{section}")',
+              '                    composable("mine-list/{type}/{id}")',
+          '''                    composable("settings/{section}") { entry ->
+                                  val section = entry.arguments?.getString("section").orEmpty()
+                                  val settingsSession = args.settingsSessions.getOrPut(section) { SettingsDetailSession() }.also {
+                                      while (args.settingsSessions.size > 12) args.settingsSessions.remove(args.settingsSessions.keys.first())
+                                  }
+                                  SettingsDetailScreen(
+                                      container = container,
+                                      section = section,
+                                      onOpenList = ::openMineList,
+                                      onBack = { navController.popBackStack() },
+                                      session = settingsSession,
+                                  )
+                              }
+          ''')
+          
+          # Normalize NavArgs declarations. The earlier channel-session patch may already have
+          # inserted categorySessions; never leave duplicate Kotlin properties in the same class.
+          nav_start = a.index('private class NavArgs {')
+          nav_end = a.index('\n}', nav_start)
+          nav_block = a[nav_start:nav_end + 2]
+          seen_names = set()
+          normalized_lines = []
+          for line in nav_block.splitlines():
+              match = re.match(r'\s*(?:val|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=', line)
+              if match:
+                  name = match.group(1)
+                  if name in seen_names:
+                      continue
+                  seen_names.add(name)
+              normalized_lines.append(line)
+          normalized_block = '\n'.join(normalized_lines)
+          a = a[:nav_start] + normalized_block + a[nav_end + 2:]
+          for required in ('targetSessions', 'categorySessions', 'mineListSessions', 'userSessions', 'settingsSessions'):
+              count = len(re.findall(rf'(?m)^\s*val {required}\s*=', normalized_block))
+              if count != 1:
+                  raise RuntimeError(f'NavArgs must declare {required} exactly once; found {count}')
+          p.write_text(a)
+          print('Root-owned user, target, category, mine and settings route sessions wired')
+          print('NavArgs declaration uniqueness verified')
+          
+          
+          print('Route-state retention for user, target, category, mine and settings pages applied')
+          PATCH_EOF
+          python3 -m py_compile /tmp/patch_wear_0612.py /tmp/patch_wear_0612_routes.py
+          python3 /tmp/patch_wear_0612.py
+          python3 /tmp/patch_wear_0612_routes.py
+
+      - name: Verify Wear OS 0.6.12 all-channel state, Gaussian glass, network recovery and ARMv7 ABI
         shell: bash
         run: |
           set -euo pipefail
@@ -6088,8 +7261,8 @@ jobs:
           test -s wear/build.gradle.kts
           grep -q '":wear"' settings.gradle.kts
           grep -q 'https://maven.mozilla.org/maven2/' settings.gradle.kts
-          grep -q 'versionCode = 2026103116' wear/build.gradle.kts
-          grep -q 'versionName = "0.6.11"' wear/build.gradle.kts
+          grep -q 'versionCode = 2026103117' wear/build.gradle.kts
+          grep -q 'versionName = "0.6.12"' wear/build.gradle.kts
           grep -q 'targetSdk = 37' wear/build.gradle.kts
           grep -q 'minorApiLevel = 2' wear/build.gradle.kts
           grep -q 'version = release(37)' wear/build.gradle.kts
@@ -6113,6 +7286,32 @@ jobs:
           assert app.index('val args = remember { NavArgs() }') < app.index('AppScaffold {')
           assert app.count('val navController = rememberSwipeDismissableNavController()') == 1
           print('Verified NavController and route payloads outlive the AppScaffold content slot.')
+          PY
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path('wear/src/main/kotlin/com/zailinn/c001apk/wear')
+          app = (root / 'WearApp.kt').read_text()
+          channel = (root / 'ChannelScreens.kt').read_text()
+          more = (root / 'MoreScreens.kt').read_text()
+          detail = (root / 'DetailScreens.kt').read_text()
+          target = (root / 'TargetScreen.kt').read_text()
+          components = (root / 'Components.kt').read_text()
+          assert 'CategoryFeedScreen(container, category, categorySession' in app
+          assert 'TargetScreen(container, target' in app and 'targetSession)' in app
+          assert 'session = userSession' in app
+          assert 'session = settingsSession' in app
+          assert 'session = mineSession' in app
+          assert 'class CategoryFeedSession' in channel and 'val feed: PagedFeed' in channel
+          assert 'class SearchChannelSession' in channel and 'class SearchTypeSession' in channel
+          assert 'class MineListSession' in more and 'session.feed(feedKey)' in more
+          assert 'class UserScreenSession' in detail and 'val feeds = container.newPagedFeed' in detail
+          assert 'class TargetScreenSession' in target and 'private var posts: PagedFeed?' in target
+          assert '.blur(22.dp)' in channel and '.blur(24.dp)' in components
+          assert 'openSettingsList("LOCAL_FAVORITES", null)' in more
+          assert 'openSettingsList("CLOUD_COLLECTIONS", null)' in more
+          assert 'args.targetSessions.size > 16' in app
+          assert 'args.categorySessions.size > 12' in app
+          print('All-channel route sessions, retained PagedFeeds, nested list checkpoints and high-radius Gaussian material checks passed.')
           PY
           if grep -q 'LaunchedEffect(configuredHome)' "$W/WearApp.kt"; then echo 'Old forced-home reset regression detected' >&2; exit 1; fi
           grep -q 'getChannelLoadedPages(durableFeedKey)' "$W/ChannelScreens.kt"
@@ -6154,6 +7353,22 @@ jobs:
           grep -q 'val retainedChannelFeeds = remember' "$W/WearApp.kt"
           grep -q 'listStates = channelListStates' "$W/WearApp.kt"
           grep -q 'retainedFeeds.getOrPut(feedKey)' "$W/ChannelScreens.kt"
+          grep -q 'class ChannelHubSession' "$W/ChannelScreens.kt"
+          grep -q 'class SearchChannelSession' "$W/ChannelScreens.kt"
+          grep -q 'class SearchTypeSession' "$W/ChannelScreens.kt"
+          grep -q 'class CategoryFeedSession' "$W/ChannelScreens.kt"
+          grep -q 'class MeScreenSession' "$W/MoreScreens.kt"
+          grep -q 'class MineListSession' "$W/MoreScreens.kt"
+          grep -q 'class SettingsDetailSession' "$W/MoreScreens.kt"
+          grep -q 'class UserScreenSession' "$W/DetailScreens.kt"
+          grep -q 'class TargetScreenSession' "$W/TargetScreen.kt"
+          grep -q 'session = userSession' "$W/WearApp.kt"
+          grep -q 'targetSession)' "$W/WearApp.kt"
+          grep -q 'categorySession' "$W/WearApp.kt"
+          grep -q 'session = settingsSession' "$W/WearApp.kt"
+          grep -q 'session = mineSession' "$W/WearApp.kt"
+          grep -q 'saveSettingsViewport' "$W/MoreScreens.kt"
+          grep -q 'session.accountVersion != container.accountVersion' "$W/ChannelScreens.kt"
           grep -q 'pagerState: PagerState' "$W/ChannelScreens.kt"
           grep -q 'MenuButton("← 返回设置"' "$W/MoreScreens.kt"
           grep -q 'onBack = { navController.popBackStack() }' "$W/WearApp.kt"
@@ -6166,7 +7381,8 @@ jobs:
           grep -q 'flush = true' "$W/WearApp.kt"
           grep -q 'fun GlassCard(' "$W/Components.kt"
           grep -q 'Brush.verticalGradient' "$W/Components.kt"
-          grep -q '\.blur(4.dp)' "$W/ChannelScreens.kt"
+          grep -q '\.blur(22.dp)' "$W/ChannelScreens.kt"
+          grep -q '\.blur(24.dp)' "$W/Components.kt"
           grep -q '^import androidx.compose.ui.draw.clip$' "$W/ChannelScreens.kt"
           grep -q 'beyondViewportPageCount = 0' "$W/ChannelScreens.kt"
           grep -q 'android.webkit.WebView' "$W/WearCaptchaBrowser.kt"
@@ -6176,7 +7392,7 @@ jobs:
           grep -q 'pending.acceptValidate(validate)' "$W/WearCaptchaBrowser.kt"
           grep -q 'fun acceptValidate(validate: String?)' "$W/WearCaptchaCoordinator.kt"
           grep -q 'c001apk-wear://captcha?cid=' "$W/WearCaptchaBrowser.kt"
-          grep -q 'WEAR_VERSION_NAME = "0.6.11"' "$W/MoreScreens.kt"
+          grep -q 'WEAR_VERSION_NAME = "0.6.12"' "$W/MoreScreens.kt"
           grep -q '内置浏览验证' "$W/MoreScreens.kt"
           grep -q 'feedReplies(id, listType, page, fromAuthor)' "$W/DetailScreens.kt"
           grep -q 'subRepliesVerified(origin.id.orEmpty(), page)' "$W/DetailScreens.kt"
@@ -6252,7 +7468,7 @@ jobs:
           assert 'val anchor = cards.getOrNull(centerIndex - 1)' in channel
           assert 'tappedIndex' not in channel
           assert channel.index('val cards = remember(feed.items, container.settingsRevision)') < channel.index('LaunchedEffect(state, durableFeedKey, cards, restoring)')
-          assert '.blur(4.dp)' in channel
+          assert '.blur(22.dp)' in channel
           components = (base / 'kotlin/com/zailinn/c001apk/wear/Components.kt').read_text()
           assert 'animateFloatAsState' in components and 'rail-pill-scale' in components
           assert 'android.permission.ACCESS_NETWORK_STATE' in (base / 'AndroidManifest.xml').read_text()
@@ -6278,8 +7494,8 @@ jobs:
           assert 'arm64-v8a' not in build
           print(f'Validated 8-entry single navigation rail, on-watch WebView/GeckoView proof callback, manifest and {len(kotlin)} Kotlin files; ABI filter is armeabi-v7a only.')
           PY
-          python3 -m py_compile /tmp/patch_wear_064.py /tmp/patch_wear_066.py /tmp/patch_wear_067_network.py /tmp/patch_wear_068_navigation.py /tmp/patch_wear_069_return.py
-          echo 'Wear OS 0.6.11 root navigation, list restore, glass UI, bounded network recovery, Wear OS 6/7 and ARMv7-only checks passed.'
+          python3 -m py_compile /tmp/patch_wear_064.py /tmp/patch_wear_066.py /tmp/patch_wear_067_network.py /tmp/patch_wear_068_navigation.py /tmp/patch_wear_069_return.py /tmp/patch_wear_0612.py /tmp/patch_wear_0612_routes.py
+          echo 'Wear OS 0.6.12 all-channel session retention, Gaussian glass, bounded network recovery, Wear OS 6/7 and ARMv7-only checks passed.'
           python3 - <<'PY'
           from pathlib import Path
           app = Path('wear/src/main/kotlin/com/zailinn/c001apk/wear/WearApp.kt').read_text()
@@ -6312,30 +7528,30 @@ jobs:
           print('Persistent navigation, partial-failure-safe page count, 40-page horizon and anchor restoration checks passed.')
           PY
 
-      - name: Kotlin compile preflight - Wear OS 0.6.11
+      - name: Kotlin compile preflight - Wear OS 0.6.12
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./gradlew
           ./gradlew :wear:compileReleaseKotlin --no-daemon --stacktrace --console=plain
 
-      - name: Build Wear OS 0.6.11 32-bit ARMv7 release APK
+      - name: Build Wear OS 0.6.12 32-bit ARMv7 release APK
         shell: bash
         run: |
           set -euo pipefail
           ./gradlew :wear:assembleRelease --no-daemon --stacktrace --console=plain
 
-      - name: Verify APK 0.6.11 output and native ABI
+      - name: Verify APK 0.6.12 output and native ABI
         run: |
           set -euo pipefail
           ls -lh wear/build/outputs/apk/release/
           test -s wear/build/outputs/apk/release/wear-release.apk
           mkdir -p dist
-          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.11-RootNavigation-ARMv7-GalaxyWatch7.apk
-          sha256sum dist/Coolapk-WearOS-v0.6.11-RootNavigation-ARMv7-GalaxyWatch7.apk > dist/SHA256SUMS.txt
+          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.12-AllChannels-GaussianGlass-ARMv7-GalaxyWatch7.apk
+          sha256sum dist/Coolapk-WearOS-v0.6.12-AllChannels-GaussianGlass-ARMv7-GalaxyWatch7.apk > dist/SHA256SUMS.txt
           python3 - <<'PY'
           import zipfile
-          apk = 'dist/Coolapk-WearOS-v0.6.11-RootNavigation-ARMv7-GalaxyWatch7.apk'
+          apk = 'dist/Coolapk-WearOS-v0.6.12-AllChannels-GaussianGlass-ARMv7-GalaxyWatch7.apk'
           with zipfile.ZipFile(apk) as z:
               abis = sorted({n.split('/')[1] for n in z.namelist() if n.startswith('lib/') and len(n.split('/')) > 2})
           print('APK native ABI folders:', abis)
@@ -6347,12 +7563,12 @@ jobs:
               f.write('required=armeabi-v7a\n')
               f.write('64bit_or_x86=none\n')
           PY
-          printf 'versionName=0.6.11\nversionCode=2026103116\ntargetSdk=37\ncompileSdk=37.2 (minorApiLevel=2)\nbuildTools=37.0.0\nabi=armeabi-v7a-only\nwearOs=6-and-7\nminSdk=30\nnetworkRecovery=validated-route-callback+single-retry\nrequestTimeout=30s\nnavigationPersistence=root-owned-navcontroller+pager+route-args+sync-checkpoint\nwebview=system-first\ngeckoview=159.0.20261022150525-armeabi-v7a\n' > dist/BUILD_INFO.txt
+          printf 'versionName=0.6.12\nversionCode=2026103117\ntargetSdk=37\ncompileSdk=37.2 (minorApiLevel=2)\nbuildTools=37.0.0\nabi=armeabi-v7a-only\nwearOs=6-and-7\nminSdk=30\nnetworkRecovery=validated-route-callback+single-retry\nrequestTimeout=30s\nnavigationPersistence=root-owned-navcontroller+all-channel-session-cache+route-pagedfeeds+sync-checkpoint\nwebview=system-first\ngeckoview=159.0.20261022150525-armeabi-v7a\n' > dist/BUILD_INFO.txt
           printf 'source=%s\ncommit=%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> dist/BUILD_INFO.txt
 
       - name: Upload Wear APK
         uses: actions/upload-artifact@v7
         with:
-          name: Coolapk-WearOS-v0.6.11-RootNavigation-ARMv7-GalaxyWatch7
+          name: Coolapk-WearOS-v0.6.12-AllChannels-GaussianGlass-ARMv7-GalaxyWatch7
           path: dist/
           if-no-files-found: error
