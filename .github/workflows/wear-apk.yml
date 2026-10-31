@@ -1,9 +1,9 @@
-# 酷安 Wear OS 0.6.12 / Galaxy Watch7 32-bit ARMv7 全频道状态保留、高斯模糊与流畅度优化版自动编译工作流
+# 酷安 Wear OS 0.6.13 / Galaxy Watch7 32-bit ARMv7 全频道状态保留、高斯模糊与流畅度优化版自动编译工作流
 # 使用：将本文件放到 .github/workflows/wear-apk.yml 并提交到 main。
 # 从你 Fork 仓库当前提交构建，保留 :core 网络层；手表端单独适配圆屏 UI。
 
-name: Build Coolapk Wear OS v0.6.12 - All Channels and Gaussian Glass - ARMv7 - Galaxy Watch7
-run-name: Wear OS 0.6.12 全频道返回状态保留、高斯模糊材质、手表性能优化、Wear OS 6/7、32 位 ARMv7
+name: Build Coolapk Wear OS v0.6.13 - All Channels and Gaussian Glass - ARMv7 - Galaxy Watch7
+run-name: Wear OS 0.6.13 全频道返回状态保留、高斯模糊材质、手表性能优化、Wear OS 6/7、32 位 ARMv7
 
 on:
   push:
@@ -7248,7 +7248,63 @@ jobs:
           python3 /tmp/patch_wear_0612.py
           python3 /tmp/patch_wear_0612_routes.py
 
-      - name: Verify Wear OS 0.6.12 all-channel state, Gaussian glass, network recovery and ARMv7 ABI
+      - name: Fix Wear OS 0.6.12 full-screen Gaussian rail measurement regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYFIX'
+          from pathlib import Path
+
+          channel = Path('wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt')
+          source = channel.read_text()
+          old = """.clip(glassShape)
+                  ) {
+                      androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
+                          androidx.compose.foundation.layout.Box("""
+          new = """.clip(glassShape)
+                  ) {
+                      // Background-only layers must not participate in measuring the rail.
+                      // fillMaxSize here expands the rail to the entire watch screen, pushing
+                      // HorizontalPager to zero height and leaving only the glowing blur visible.
+                      androidx.compose.foundation.layout.Box(Modifier.matchParentSize()) {
+                          androidx.compose.foundation.layout.Box("""
+          count = source.count(old)
+          if count == 1:
+              source = source.replace(old, new, 1)
+          elif count == 0 and 'Modifier.matchParentSize()) {\n                          androidx.compose.foundation.layout.Box(' in source:
+              pass  # Already fixed; safe to rerun.
+          else:
+              raise SystemExit(f'Expected one channel-rail background sizing bug, found {count}')
+          channel.write_text(source)
+
+          more = Path('wear/src/main/kotlin/com/zailinn/c001apk/wear/MoreScreens.kt')
+          ms = more.read_text()
+          if 'const val WEAR_VERSION_NAME = "0.6.12"' not in ms:
+              raise SystemExit('Wear app version 0.6.13 was not found')
+          ms = ms.replace('const val WEAR_VERSION_NAME = "0.6.12"', 'const val WEAR_VERSION_NAME = "0.6.13"', 1)
+          ms = ms.replace('"酷安 Wear OS 版 0.6.12"', '"酷安 Wear OS 版 0.6.13"', 1)
+          more.write_text(ms)
+
+          build = Path('wear/build.gradle.kts')
+          bs = build.read_text()
+          if 'versionCode = 2026103117' not in bs or 'versionName = "0.6.12"' not in bs:
+              raise SystemExit('Expected Wear build version 0.6.13 / 2026103118')
+          bs = bs.replace('versionCode = 2026103117', 'versionCode = 2026103118', 1)
+          bs = bs.replace('versionName = "0.6.12"', 'versionName = "0.6.13"', 1)
+          build.write_text(bs)
+
+          source = channel.read_text()
+          assert source.count('androidx.compose.foundation.layout.Box(Modifier.matchParentSize()) {') == 1
+          rail_start = source.index('val glassShape = RoundedCornerShape(24.dp)')
+          pager_start = source.index('HorizontalPager(pager, Modifier.fillMaxSize()', rail_start)
+          rail = source[rail_start:pager_start]
+          assert 'Modifier.fillMaxSize()' not in rail
+          assert '.blur(22.dp)' in rail
+          print('Gaussian rail background constrained to its parent; full-screen layout regression fixed.')
+          print('Wear OS 0.6.13 version pair and navigation layout checks passed.')
+          PYFIX
+
+      - name: Verify Wear OS 0.6.13 all-channel state, Gaussian glass, network recovery and ARMv7 ABI
         shell: bash
         run: |
           set -euo pipefail
@@ -7261,8 +7317,8 @@ jobs:
           test -s wear/build.gradle.kts
           grep -q '":wear"' settings.gradle.kts
           grep -q 'https://maven.mozilla.org/maven2/' settings.gradle.kts
-          grep -q 'versionCode = 2026103117' wear/build.gradle.kts
-          grep -q 'versionName = "0.6.12"' wear/build.gradle.kts
+          grep -q 'versionCode = 2026103118' wear/build.gradle.kts
+          grep -q 'versionName = "0.6.13"' wear/build.gradle.kts
           grep -q 'targetSdk = 37' wear/build.gradle.kts
           grep -q 'minorApiLevel = 2' wear/build.gradle.kts
           grep -q 'version = release(37)' wear/build.gradle.kts
@@ -7382,6 +7438,7 @@ jobs:
           grep -q 'fun GlassCard(' "$W/Components.kt"
           grep -q 'Brush.verticalGradient' "$W/Components.kt"
           grep -q '\.blur(22.dp)' "$W/ChannelScreens.kt"
+          grep -q 'Box(Modifier.matchParentSize())' "$W/ChannelScreens.kt"
           grep -q '\.blur(24.dp)' "$W/Components.kt"
           grep -q '^import androidx.compose.ui.draw.clip$' "$W/ChannelScreens.kt"
           grep -q 'beyondViewportPageCount = 0' "$W/ChannelScreens.kt"
@@ -7392,7 +7449,7 @@ jobs:
           grep -q 'pending.acceptValidate(validate)' "$W/WearCaptchaBrowser.kt"
           grep -q 'fun acceptValidate(validate: String?)' "$W/WearCaptchaCoordinator.kt"
           grep -q 'c001apk-wear://captcha?cid=' "$W/WearCaptchaBrowser.kt"
-          grep -q 'WEAR_VERSION_NAME = "0.6.12"' "$W/MoreScreens.kt"
+          grep -q 'WEAR_VERSION_NAME = "0.6.13"' "$W/MoreScreens.kt"
           grep -q '内置浏览验证' "$W/MoreScreens.kt"
           grep -q 'feedReplies(id, listType, page, fromAuthor)' "$W/DetailScreens.kt"
           grep -q 'subRepliesVerified(origin.id.orEmpty(), page)' "$W/DetailScreens.kt"
@@ -7495,7 +7552,7 @@ jobs:
           print(f'Validated 8-entry single navigation rail, on-watch WebView/GeckoView proof callback, manifest and {len(kotlin)} Kotlin files; ABI filter is armeabi-v7a only.')
           PY
           python3 -m py_compile /tmp/patch_wear_064.py /tmp/patch_wear_066.py /tmp/patch_wear_067_network.py /tmp/patch_wear_068_navigation.py /tmp/patch_wear_069_return.py /tmp/patch_wear_0612.py /tmp/patch_wear_0612_routes.py
-          echo 'Wear OS 0.6.12 all-channel session retention, Gaussian glass, bounded network recovery, Wear OS 6/7 and ARMv7-only checks passed.'
+          echo 'Wear OS 0.6.13 all-channel session retention, Gaussian glass, bounded network recovery, Wear OS 6/7 and ARMv7-only checks passed.'
           python3 - <<'PY'
           from pathlib import Path
           app = Path('wear/src/main/kotlin/com/zailinn/c001apk/wear/WearApp.kt').read_text()
@@ -7528,30 +7585,30 @@ jobs:
           print('Persistent navigation, partial-failure-safe page count, 40-page horizon and anchor restoration checks passed.')
           PY
 
-      - name: Kotlin compile preflight - Wear OS 0.6.12
+      - name: Kotlin compile preflight - Wear OS 0.6.13
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./gradlew
           ./gradlew :wear:compileReleaseKotlin --no-daemon --stacktrace --console=plain
 
-      - name: Build Wear OS 0.6.12 32-bit ARMv7 release APK
+      - name: Build Wear OS 0.6.13 32-bit ARMv7 release APK
         shell: bash
         run: |
           set -euo pipefail
           ./gradlew :wear:assembleRelease --no-daemon --stacktrace --console=plain
 
-      - name: Verify APK 0.6.12 output and native ABI
+      - name: Verify APK 0.6.13 output and native ABI
         run: |
           set -euo pipefail
           ls -lh wear/build/outputs/apk/release/
           test -s wear/build/outputs/apk/release/wear-release.apk
           mkdir -p dist
-          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.12-AllChannels-GaussianGlass-ARMv7-GalaxyWatch7.apk
-          sha256sum dist/Coolapk-WearOS-v0.6.12-AllChannels-GaussianGlass-ARMv7-GalaxyWatch7.apk > dist/SHA256SUMS.txt
+          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.13-AllChannels-GaussianGlass-ARMv7-GalaxyWatch7.apk
+          sha256sum dist/Coolapk-WearOS-v0.6.13-AllChannels-GaussianGlass-ARMv7-GalaxyWatch7.apk > dist/SHA256SUMS.txt
           python3 - <<'PY'
           import zipfile
-          apk = 'dist/Coolapk-WearOS-v0.6.12-AllChannels-GaussianGlass-ARMv7-GalaxyWatch7.apk'
+          apk = 'dist/Coolapk-WearOS-v0.6.13-AllChannels-GaussianGlass-ARMv7-GalaxyWatch7.apk'
           with zipfile.ZipFile(apk) as z:
               abis = sorted({n.split('/')[1] for n in z.namelist() if n.startswith('lib/') and len(n.split('/')) > 2})
           print('APK native ABI folders:', abis)
@@ -7563,12 +7620,12 @@ jobs:
               f.write('required=armeabi-v7a\n')
               f.write('64bit_or_x86=none\n')
           PY
-          printf 'versionName=0.6.12\nversionCode=2026103117\ntargetSdk=37\ncompileSdk=37.2 (minorApiLevel=2)\nbuildTools=37.0.0\nabi=armeabi-v7a-only\nwearOs=6-and-7\nminSdk=30\nnetworkRecovery=validated-route-callback+single-retry\nrequestTimeout=30s\nnavigationPersistence=root-owned-navcontroller+all-channel-session-cache+route-pagedfeeds+sync-checkpoint\nwebview=system-first\ngeckoview=159.0.20261022150525-armeabi-v7a\n' > dist/BUILD_INFO.txt
+          printf 'versionName=0.6.13\nversionCode=2026103118\ntargetSdk=37\ncompileSdk=37.2 (minorApiLevel=2)\nbuildTools=37.0.0\nabi=armeabi-v7a-only\nwearOs=6-and-7\nminSdk=30\nnetworkRecovery=validated-route-callback+single-retry\nrequestTimeout=30s\nnavigationPersistence=root-owned-navcontroller+all-channel-session-cache+route-pagedfeeds+sync-checkpoint\nwebview=system-first\ngeckoview=159.0.20261022150525-armeabi-v7a\n' > dist/BUILD_INFO.txt
           printf 'source=%s\ncommit=%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> dist/BUILD_INFO.txt
 
       - name: Upload Wear APK
         uses: actions/upload-artifact@v7
         with:
-          name: Coolapk-WearOS-v0.6.12-AllChannels-GaussianGlass-ARMv7-GalaxyWatch7
+          name: Coolapk-WearOS-v0.6.13-AllChannels-GaussianGlass-ARMv7-GalaxyWatch7
           path: dist/
           if-no-files-found: error
