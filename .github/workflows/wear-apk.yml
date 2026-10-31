@@ -1,9 +1,9 @@
-# 酷安 Wear OS 0.6.13 / Galaxy Watch7 32-bit ARMv7 全频道状态保留、高斯模糊与流畅度优化版自动编译工作流
+# Coolapk Wear OS 0.6.16 / Galaxy Watch7 32-bit ARMv7 交互恢复、Haze 背景模糊与 GIF 动图支持
 # 使用：将本文件放到 .github/workflows/wear-apk.yml 并提交到 main。
 # 从你 Fork 仓库当前提交构建，保留 :core 网络层；手表端单独适配圆屏 UI。
 
-name: Build Coolapk Wear OS v0.6.14 - Opaque Frosted UI and 12h Clock - ARMv7 - Galaxy Watch7
-run-name: Wear OS 0.6.14 不透明高斯磨砂、半圆时钟、底部分页圆点、账号资料、手表性能优化、32 位 ARMv7
+name: Build Coolapk Wear OS v0.6.16 - Original Gallery/Search + Haze + GIF - ARMv7
+run-name: Wear OS 0.6.16 图片滑动、原版搜索、Haze 真模糊、GIF 动图、板块图标、新图标、32 位 ARMv7
 
 on:
   push:
@@ -4175,9 +4175,10 @@ jobs:
                       return result.complete(proof)
                   }
           '''
-          if old_pending not in s:
-              raise SystemExit('Cannot locate Pending result block in WearCaptchaCoordinator.kt')
-          s = s.replace(old_pending, new_pending, 1)
+          if old_pending in s:
+              s = s.replace(old_pending, new_pending, 1)
+          elif 'fun acceptValidate(validate: String?): Boolean' not in s:
+              raise SystemExit('WearCaptchaCoordinator.kt is neither baseline nor already patched')
           old_accept = '''        val validate = uri.getQueryParameter("validate") ?: return false
                   val proof = active.challenge.proof(validate) ?: return false
                   return active.result.complete(proof)
@@ -4185,9 +4186,10 @@ jobs:
           new_accept = '''        val validate = uri.getQueryParameter("validate") ?: return false
                   return active.acceptValidate(validate)
           '''
-          if old_accept not in s:
-              raise SystemExit('Cannot locate coordinator acceptReturn proof block')
-          s = s.replace(old_accept, new_accept, 1)
+          if old_accept in s:
+              s = s.replace(old_accept, new_accept, 1)
+          elif 'return active.acceptValidate(validate)' not in s:
+              raise SystemExit('Cannot locate baseline or already-patched coordinator acceptReturn block')
           coordinator.write_text(s)
 
           # 3) Replace external browser handoff with an in-app WebView-first / ARMv7 GeckoView fallback.
@@ -7975,47 +7977,1175 @@ jobs:
           print('Persistent navigation, partial-failure-safe page count, 40-page horizon and anchor restoration checks passed.')
           PY
 
-      - name: Kotlin compile preflight - Wear OS 0.6.14
+      - name: Apply Wear OS 0.6.15 gallery, search, Haze, GIF and launcher icon prerequisite
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/patch_wear_0615.py <<'PY'
+          from pathlib import Path
+          import re
+          import tomllib
+
+          ROOT = Path('wear/src/main')
+          PKG = ROOT / 'kotlin/com/zailinn/c001apk/wear'
+
+          # Validate the repository's Coil version catalog before touching any generated source.
+          catalog = Path('gradle/libs.versions.toml')
+          if not catalog.exists():
+              raise SystemExit('Cannot find gradle/libs.versions.toml to align the Coil GIF artifact version')
+          toml = tomllib.loads(catalog.read_text(encoding='utf-8'))
+          def walk(node, prefix=''):
+              if isinstance(node, dict):
+                  if 'module' in node or ('group' in node and 'name' in node):
+                      yield prefix, node
+                  else:
+                      for k, v in node.items():
+                          yield from walk(v, f'{prefix}.{k}' if prefix else k)
+          def module_of(entry):
+              if entry.get('module'):
+                  return str(entry['module'])
+              if entry.get('group') and entry.get('name'):
+                  return f"{entry['group']}:{entry['name']}"
+              return ''
+          library_entries = dict(walk(toml.get('libraries', {})))
+          coil_entry = next((v for v in library_entries.values() if module_of(v).startswith('io.coil-kt.coil3:coil-compose')), None)
+          if coil_entry is None:
+              raise SystemExit('Cannot locate the existing Coil Compose module in version catalog')
+          version = coil_entry.get('version')
+          if isinstance(version, dict) and 'ref' in version:
+              version_text = f'version.ref = "{version["ref"]}"'
+          elif isinstance(version, str):
+              version_text = f'version = "{version}"'
+          else:
+              raise SystemExit(f'Unsupported Coil version catalog entry: {coil_entry}')
+
+          def read(name):
+              p = PKG / name
+              return p, p.read_text(encoding='utf-8')
+
+          def write(p, s):
+              p.write_text(s, encoding='utf-8')
+
+          # 1) Image viewer: swipe with HorizontalPager; never intercept a tap to advance.
+          p, s = read('AccountScreens.kt')
+          for imp in [
+              'import androidx.compose.foundation.pager.HorizontalPager\n',
+              'import androidx.compose.foundation.pager.rememberPagerState\n',
+          ]:
+              if imp.strip() not in s:
+                  s = s.replace('import androidx.compose.foundation.clickable\n', 'import androidx.compose.foundation.clickable\n' + imp, 1)
+          start = s.index('/** Full-screen picture.')
+          end = len(s)
+          new_viewer = r'''/** Full-screen gallery. Swipe horizontally to move between photos; the action saves the current page. */
+          @Composable
+          fun ImageViewerScreen(urls: List<String>, startIndex: Int, container: WearContainer) {
+              val initialIndex = startIndex.coerceIn(0, (urls.size - 1).coerceAtLeast(0))
+              val pagerState = rememberPagerState(initialPage = initialIndex) { urls.size.coerceAtLeast(1) }
+              val index = pagerState.currentPage.coerceIn(0, (urls.size - 1).coerceAtLeast(0))
+              var saving by remember { mutableStateOf(false) }
+              var message by remember { mutableStateOf<String?>(null) }
+              val context = LocalContext.current
+              val scope = rememberCoroutineScope()
+              val placeholder = softPainter()
+              androidx.compose.foundation.layout.Box(
+                  modifier = Modifier.fillMaxSize(),
+                  contentAlignment = Alignment.Center,
+              ) {
+                  if (urls.isEmpty()) {
+                      Text("没有可显示的图片", style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+                  } else {
+                      HorizontalPager(
+                          state = pagerState,
+                          modifier = Modifier.fillMaxSize(),
+                          beyondViewportPageCount = 1,
+                      ) { page ->
+                          AsyncImage(
+                              model = urls.getOrNull(page),
+                              contentDescription = "图片 ${page + 1}",
+                              modifier = Modifier.fillMaxSize(),
+                              contentScale = ContentScale.Fit,
+                              placeholder = placeholder,
+                          )
+                      }
+                  }
+                  Column(
+                      modifier = Modifier.align(Alignment.BottomCenter)
+                          .background(Color.Black.copy(alpha = .72f), androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
+                          .padding(horizontal = 10.dp, vertical = 6.dp),
+                      horizontalAlignment = Alignment.CenterHorizontally,
+                  ) {
+                      if (message != null) Text(message.orEmpty(), style = MaterialTheme.typography.labelSmall, color = Color.White, textAlign = TextAlign.Center)
+                      if (urls.size > 1) Text("${index + 1}/${urls.size} · 左右滑动切换", style = MaterialTheme.typography.labelSmall, color = Color.White)
+                      FilledTonalButton(
+                          onClick = {
+                              val url = urls.getOrNull(index) ?: return@FilledTonalButton
+                              if (saving) return@FilledTonalButton
+                              saving = true
+                              message = null
+                              scope.launch {
+                                  val result = container.saveImage(context, url)
+                                  saving = false
+                                  message = if (result.isSuccess) "已保存到相册" else "保存失败，请检查网络"
+                              }
+                          },
+                          enabled = !saving && urls.isNotEmpty(),
+                      ) { Text(if (saving) "保存中…" else "下载当前图片") }
+                  }
+              }
+          }
+          '''
+          s = s[:start] + new_viewer
+          write(p, s)
+
+          # 2) Search: submit once and render a proper scrolling results feed; direct type tabs, no nested "results" buttons.
+          p, s = read('ChannelScreens.kt')
+          # Remove the decorative radial glow from the rail; replace the full hub with actual source-backed Haze.
+          start = s.index('@Composable\nfun ChannelHubScreen(')
+          end = s.index('\n@Composable\nprivate fun FeedChannel(', start)
+          new_hub = r'''@Composable
+          fun ChannelHubScreen(
+              container: WearContainer,
+              onOpenFeed: (Datum) -> Unit,
+              onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+              onSearch: (String) -> Unit,
+              onOpenCategory: (Datum) -> Unit,
+              onLogin: () -> Unit,
+              onProfile: (String) -> Unit,
+              onAbout: () -> Unit,
+              onOpenMineList: (String, String?) -> Unit,
+              onOpenNotification: (String) -> Unit,
+              onOpenSettingsSection: (String) -> Unit,
+              pagerState: PagerState,
+              railState: ScrollState,
+              listStates: List<ScalingLazyListState>,
+              retainedFeeds: MutableMap<String, PagedFeed>,
+              hubSession: ChannelHubSession,
+          ) {
+              val navItems = listOf("推荐", "热门", "话题", "数码", "酷图", "搜索", "我的", "设置")
+              val pager = pagerState
+              val scope = rememberCoroutineScope()
+              val hazeState = rememberHazeState()
+              val glassShape = RoundedCornerShape(24.dp)
+
+              // The pager is the captured background. Haze samples the real page content underneath
+              // the floating rail; this removes the old hand-drawn white/green radial rings entirely.
+              androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
+                  HorizontalPager(
+                      state = pager,
+                      modifier = Modifier.fillMaxSize().padding(bottom = 17.dp).hazeSource(state = hazeState),
+                      beyondViewportPageCount = 0,
+                  ) { page ->
+                      when (page) {
+                          0 -> FeedChannel(container, "推荐", null, null, onOpenFeed, onOpenUser, onOpenTarget, listStates[0], retainedFeeds)
+                          1 -> FeedChannel(container, "热门", "/page?url=V9_HOME_TAB_RANKING", "热榜", onOpenFeed, onOpenUser, onOpenTarget, listStates[1], retainedFeeds)
+                          2 -> CategoryIndexChannel(container, topic = true, onOpenCategory = onOpenCategory, listState = listStates[2], session = hubSession)
+                          3 -> CategoryIndexChannel(container, topic = false, onOpenCategory = onOpenCategory, listState = listStates[3], session = hubSession)
+                          4 -> FeedChannel(container, "酷图", "/page?url=V11_FIND_COOLPIC", "酷图", onOpenFeed, onOpenUser, onOpenTarget, listStates[4], retainedFeeds)
+                          5 -> SearchScreen(container, onSubmit = onSearch)
+                          6 -> MeScreen(
+                              container = container,
+                              onLogin = onLogin,
+                              onProfile = onProfile,
+                              onAbout = onAbout,
+                              onSettings = { scope.launch { pager.animateScrollToPage(7) } },
+                              onOpenList = onOpenMineList,
+                              onOpenNotification = onOpenNotification,
+                              listState = listStates[6],
+                              session = hubSession.me,
+                          )
+                          else -> SettingsScreen(
+                              container = container,
+                              onLogin = onLogin,
+                              onOpenSection = onOpenSettingsSection,
+                              onAbout = onAbout,
+                              listState = listStates[7],
+                          )
+                      }
+                  }
+
+                  Row(
+                      modifier = Modifier.align(Alignment.TopCenter)
+                          .fillMaxWidth()
+                          .padding(horizontal = 7.dp, vertical = 2.dp)
+                          .clip(glassShape)
+                          .hazeEffect(state = hazeState)
+                          .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.76f))
+                          .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f), glassShape)
+                          .horizontalScroll(railState)
+                          .padding(horizontal = 7.dp, vertical = 4.dp),
+                      horizontalArrangement = Arrangement.spacedBy(5.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                  ) {
+                      navItems.forEachIndexed { index, title ->
+                          ChoiceButton(
+                              text = title,
+                              selected = pager.currentPage == index,
+                              onClick = { scope.launch { pager.animateScrollToPage(index) } },
+                              modifier = Modifier.heightIn(min = 36.dp),
+                          )
+                      }
+                  }
+
+                  Row(
+                      modifier = Modifier.align(Alignment.BottomCenter).height(17.dp),
+                      horizontalArrangement = Arrangement.spacedBy(3.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                  ) {
+                      navItems.indices.forEach { index ->
+                          val selected = pager.currentPage == index
+                          androidx.compose.foundation.layout.Box(
+                              modifier = Modifier.size(14.dp).clickable { scope.launch { pager.animateScrollToPage(index) } },
+                              contentAlignment = Alignment.Center,
+                          ) {
+                              androidx.compose.foundation.layout.Box(
+                                  modifier = Modifier.size(if (selected) 11.dp else 4.dp).clip(CircleShape)
+                                      .then(if (selected) Modifier.border(1.2.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.86f), CircleShape) else Modifier),
+                              ) {
+                                  if (selected) androidx.compose.foundation.layout.Box(
+                                      Modifier.size(3.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary),
+                                  ) else androidx.compose.foundation.layout.Box(
+                                      Modifier.size(4.dp).clip(CircleShape).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.62f)),
+                                  )
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+          '''
+          s = s[:start] + new_hub + s[end:]
+          # imports for Haze
+          if 'import dev.chrisbanes.haze.rememberHazeState' not in s:
+              s = s.replace('import kotlinx.coroutines.flow.collectLatest\n', 'import kotlinx.coroutines.flow.collectLatest\nimport dev.chrisbanes.haze.rememberHazeState\nimport dev.chrisbanes.haze.hazeSource\nimport dev.chrisbanes.haze.hazeEffect\n', 1)
+          # Category icon logos from the original Datum model.
+          old = '''                FilledTonalButton(
+                              onClick = { onOpenCategory(item) },
+                              modifier = Modifier.fillMaxWidth(),
+                              label = { Text(item.title.orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis) },'''
+          new = '''                FilledTonalButton(
+                              onClick = { onOpenCategory(item) },
+                              modifier = Modifier.fillMaxWidth(),
+                              icon = { if (!item.logo.isNullOrBlank()) Avatar(item.logo, 26.dp) else LetterBadge(item.title.orEmpty(), 26.dp) },
+                              label = { Text(item.title.orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis) },'''
+          if old not in s:
+              if 'icon = { if (!item.logo.isNullOrBlank()) Avatar(item.logo, 26.dp)' not in s:
+                  raise SystemExit('Cannot locate CategoryIndexChannel item button for icon patch')
+          else:
+              s = s.replace(old, new, 1)
+          # Search returns to the original one-step SearchScreen -> paginated ResultsScreen route.
+          # This matches the recommendation feed cards and infinite pagination.
+          wear_app_path = PKG / 'WearApp.kt'
+          wa = wear_app_path.read_text(encoding='utf-8')
+          needle = "                            onOpenTarget = ::openTarget,\n                            onOpenCategory = ::openCategory,"
+          new_call = """                            onOpenTarget = ::openTarget,
+                                      onSearch = { keyword ->
+                                          container.addHistory(keyword)
+                                          args.keyword = keyword
+                                          results = container.newPagedFeed { page ->
+                                              container.repository.search("feed", "all", "default", keyword, 0, null, null, page)
+                                          }
+                                          navController.navigate("results")
+                                      },
+                                      onOpenCategory = ::openCategory,"""
+          if needle in wa:
+              wa = wa.replace(needle, new_call, 1)
+          elif 'onSearch = { keyword ->' not in wa:
+              raise SystemExit('Cannot locate ChannelHubScreen call in WearApp.kt')
+          wear_app_path.write_text(wa, encoding='utf-8')
+          # Remove the abandoned inline search widgets and their session cache; the app now routes
+          # directly through the original SearchScreen -> paginated ResultsScreen implementation.
+          s = s.replace('    val search = SearchChannelSession()\n', '', 1)
+          class_start = s.find('class SearchChannelSession {')
+          class_end = s.find('/** Category list feed, sort selection and viewport remain alive', class_start)
+          if class_start >= 0 and class_end > class_start:
+              s = s[:class_start] + s[class_end:]
+          search_start = s.find('@Composable\nprivate fun SearchChannel(')
+          search_end = s.find('@Composable\nfun CategoryFeedScreen(', search_start)
+          if search_start >= 0 and search_end > search_start:
+              s = s[:search_start] + s[search_end:]
+          write(p, s)
+
+          # 3) Remove hand-drawn radial white ring from GlassCard; use a clean neutral material.
+          p, s = read('Components.kt')
+          start = s.index('/** Opaque Gaussian-frosted material')
+          end = s.index('\n/** A feed in a list:', start)
+          new_glass = r'''/** Neutral frosted card; no synthetic radial ring or spotlight is painted on top. */
+          @Composable
+          fun GlassCard(
+              onClick: () -> Unit,
+              modifier: Modifier = Modifier,
+              content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+          ) {
+              val shape = RoundedCornerShape(17.dp)
+              val base = MaterialTheme.colorScheme.surfaceContainerHigh
+              Column(
+                  modifier = modifier.fillMaxWidth()
+                      .clip(shape)
+                      .background(Brush.verticalGradient(listOf(
+                          base.copy(alpha = 0.96f),
+                          MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.96f),
+                      )))
+                      .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.48f), shape)
+                      .clickable(onClick = onClick)
+                      .padding(10.dp),
+                  content = content,
+              )
+          }
+          '''
+          s = s[:start] + new_glass + s[end:]
+          # Preserve animated media source URLs instead of applying static-thumbnail transformations to GIF/WebP.
+          old_pic = 'val picture = remember(feed) { feed.picArr.firstOrNull()?.let(::thumbnail) }'
+          new_pic = '''val picture = remember(feed) {
+                  feed.picArr.firstOrNull()?.let { raw ->
+                      val lower = raw.substringBefore('?').lowercase(Locale.ROOT)
+                      if (lower.endsWith(".gif") || lower.endsWith(".webp") || lower.endsWith(".apng")) fullUrl(raw) else thumbnail(raw)
+                  }
+              }'''
+          if old_pic in s:
+              s = s.replace(old_pic, new_pic, 1)
+          elif 'val picture = remember(feed)' not in s:
+              raise SystemExit('Cannot find FeedCard picture selection expression')
+          if 'import java.util.Locale' not in s:
+              s = s.replace('import kotlinx.coroutines.launch\n', 'import kotlinx.coroutines.launch\nimport java.util.Locale\n', 1)
+          write(p, s)
+
+          # 4) Add Coil 3 GIF / animated WebP decoder using the exact version of the existing Coil Compose alias.
+          p, s = read('WearApplication.kt')
+          if 'import coil3.gif.AnimatedImageDecoder' not in s:
+              s = s.replace('import coil3.compose', 'import coil3.gif.AnimatedImageDecoder\nimport coil3.compose', 1) if 'import coil3.compose' in s else s.replace('import coil3.network.okhttp.OkHttpNetworkFetcherFactory\n', 'import coil3.network.okhttp.OkHttpNetworkFetcherFactory\nimport coil3.gif.AnimatedImageDecoder\n', 1)
+          if 'add(AnimatedImageDecoder.Factory())' not in s:
+              s = s.replace('add(OkHttpNetworkFetcherFactory(callFactory = { container.imageHttp }))', 'add(OkHttpNetworkFetcherFactory(callFactory = { container.imageHttp }))\n            add(AnimatedImageDecoder.Factory())', 1)
+          write(p, s)
+
+          # 5) Category icons were removed in the simplified Wear category directory; restore the Datum logo slot.
+          # (Already handled in ChannelScreens category buttons above.)
+
+          # 6) New app icon and remove the in-app Coolapk wordmark from the launcher activity label.
+          manifest = ROOT / 'AndroidManifest.xml'
+          ms = manifest.read_text(encoding='utf-8')
+          ms = ms.replace('android:label="酷安"', 'android:label="C001 Wear"', 1)
+          manifest.write_text(ms, encoding='utf-8')
+          icon = ROOT / 'res/drawable/ic_launcher.xml'
+          icon.parent.mkdir(parents=True, exist_ok=True)
+          icon.write_text(r'''<?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="48dp"
+              android:height="48dp"
+              android:viewportWidth="48"
+              android:viewportHeight="48">
+              <path android:fillColor="#111820" android:pathData="M12,2h24c6,0 10,4 10,10v24c0,6 -4,10 -10,10H12C6,46 2,42 2,36V12C2,6 6,2 12,2z" />
+              <path android:fillColor="#27C987" android:pathData="M24,8c-9.4,0 -17,6.9 -17,15.4 0,4.3 2,8.2 5.2,11l-1.1,5.2 6.2,-2.6c2.1,0.9 4.4,1.4 6.7,1.4 9.4,0 17,-6.9 17,-15.4S33.4,8 24,8z" />
+              <path android:fillColor="#111820" android:pathData="M16,17h16c1.1,0 2,0.9 2,2v9c0,1.1 -0.9,2 -2,2H23l-5,4v-4h-2c-1.1,0 -2,-0.9 -2,-2v-9c0,-1.1 0.9,-2 2,-2z" />
+              <path android:fillColor="#FFFFFF" android:pathData="M19,21h10c0.8,0 1.5,0.7 1.5,1.5S29.8,24 29,24H19c-0.8,0 -1.5,-0.7 -1.5,-1.5S18.2,21 19,21zM19,26h7c0.8,0 1.5,0.7 1.5,1.5S26.8,29 26,29h-7c-0.8,0 -1.5,-0.7 -1.5,-1.5S18.2,26 19,26z" />
+          </vector>
+          ''', encoding='utf-8')
+
+          # 7) Version metadata.
+          p, s = read('MoreScreens.kt')
+          s = s.replace('const val WEAR_VERSION_NAME = "0.6.14"', 'const val WEAR_VERSION_NAME = "0.6.15"', 1)
+          write(p, s)
+          p, s = read('HomeScreens.kt')
+          s = s.replace('酷安 Wear OS 版 0.6.14', '酷安 Wear OS 版 0.6.15', 1)
+          write(p, s)
+
+          # 8) Add Coil GIF dependency using the already validated Coil Compose version.
+          # Reuse the existing alias if already present; otherwise append it under [libraries].
+          if not any(k.replace('.', '-') == 'coil-gif' for k in library_entries):
+              block = re.search(r'(?ms)^\[libraries\]\s*$.*?(?=^\[|\Z)', catalog.read_text(encoding='utf-8'))
+              if block is None:
+                  raise SystemExit('Cannot locate [libraries] section in libs.versions.toml')
+              line = f'coil-gif = {{ module = "io.coil-kt.coil3:coil-gif", {version_text} }}\n'
+              text = catalog.read_text(encoding='utf-8')
+              insert = block.end()
+              text = text[:insert] + line + text[insert:]
+              catalog.write_text(text, encoding='utf-8')
+
+          build = Path('wear/build.gradle.kts')
+          bs = build.read_text(encoding='utf-8')
+          if 'implementation(libs.coil.gif)' not in bs:
+              bs = bs.replace('implementation(libs.coil.compose)', 'implementation(libs.coil.compose)\n    implementation(libs.coil.gif)', 1)
+          if 'dev.chrisbanes.haze:haze:1.7.0' not in bs:
+              bs = bs.replace('implementation(libs.coil.network.okhttp)', 'implementation(libs.coil.network.okhttp)\n    implementation("dev.chrisbanes.haze:haze:1.7.0")', 1)
+          # Update the Wear version only once, preserving the existing target/ABI configuration.
+          bs = bs.replace('versionCode = 2026103119', 'versionCode = 2026103120', 1)
+          bs = bs.replace('versionName = "0.6.14"', 'versionName = "0.6.15"', 1)
+          build.write_text(bs, encoding='utf-8')
+
+          print('0.6.15 patch: swipe gallery, feed-style search, source-backed Haze blur, GIF/animated WebP, category icons and launcher icon applied.')
+          PY
+          python3 -m py_compile /tmp/patch_wear_0615.py
+          python3 /tmp/patch_wear_0615.py
+
+      - name: Verify Wear OS 0.6.15 restored interaction, media, blur and ABI
+        shell: bash
+        run: |
+          set -euo pipefail
+          W=wear/src/main/kotlin/com/zailinn/c001apk/wear
+          grep -q 'versionCode = 2026103120' wear/build.gradle.kts
+          grep -q 'versionName = "0.6.15"' wear/build.gradle.kts
+          grep -q 'implementation("dev.chrisbanes.haze:haze:1.7.0")' wear/build.gradle.kts
+          grep -q 'implementation(libs.coil.gif)' wear/build.gradle.kts
+          grep -q 'HorizontalPager(' "$W/AccountScreens.kt"
+          grep -q 'rememberPagerState(initialPage = initialIndex)' "$W/AccountScreens.kt"
+          grep -q '左右滑动切换' "$W/AccountScreens.kt"
+          grep -q 'SearchScreen(container, onSubmit = onSearch)' "$W/ChannelScreens.kt"
+          grep -q 'results = container.newPagedFeed' "$W/WearApp.kt"
+          grep -q 'ResultsScreen(' "$W/WearApp.kt"
+          grep -q '\.hazeSource(state = hazeState)' "$W/ChannelScreens.kt"
+          grep -q '\.hazeEffect(state = hazeState)' "$W/ChannelScreens.kt"
+          grep -q 'import coil3.gif.AnimatedImageDecoder' "$W/WearApplication.kt"
+          grep -q 'add(AnimatedImageDecoder.Factory())' "$W/WearApplication.kt"
+          grep -q 'lower.endsWith(".gif")' "$W/Components.kt"
+          grep -q 'lower.endsWith(".webp")' "$W/Components.kt"
+          grep -q 'item.logo' "$W/ChannelScreens.kt"
+          grep -q 'android:label="C001 Wear"' wear/src/main/AndroidManifest.xml
+          test -s wear/src/main/res/drawable/ic_launcher.xml
+          grep -q 'android:fillColor="#27C987"' wear/src/main/res/drawable/ic_launcher.xml
+          if grep -q 'SearchTypeButton\|SearchResultsSection\|private fun SearchChannel(' "$W/ChannelScreens.kt"; then echo 'Old nested search implementation still present' >&2; exit 1; fi
+          if grep -q 'radialGradient' "$W/ChannelScreens.kt"; then echo 'Synthetic rail glow remains; expected Haze-only rail' >&2; exit 1; fi
+          python3 - <<'PYVERIFY'
+          from pathlib import Path
+          import tomllib
+          root = Path("wear/src/main/kotlin/com/zailinn/c001apk/wear")
+          channel = (root / "ChannelScreens.kt").read_text()
+          account = (root / "AccountScreens.kt").read_text()
+          app = (root / "WearApp.kt").read_text()
+          components = (root / "Components.kt").read_text()
+          app_image = (root / "WearApplication.kt").read_text()
+          build = Path("wear/build.gradle.kts").read_text()
+          manifest = Path("wear/src/main/AndroidManifest.xml").read_text()
+          catalog = tomllib.loads(Path("gradle/libs.versions.toml").read_text())
+          assert "onSearch = { keyword ->" in app and "navController.navigate(\"results\")" in app
+          assert "items(cards, key = { keyOf(it) })" in (root / "HomeScreens.kt").read_text()
+          assert "FeedCard(feedItem" in (root / "HomeScreens.kt").read_text()
+          assert "fun SearchChannel(" not in channel and "class SearchChannelSession" not in channel
+          assert "HorizontalPager(" in account and "clickable" not in account[account.index("fun ImageViewerScreen"):]
+          assert "hazeSource(state = hazeState)" in channel and "hazeEffect(state = hazeState)" in channel
+          assert "radialGradient" not in channel
+          gs = components[components.index("fun GlassCard("):components.index("/** A feed in a list:")]
+          assert "radialGradient" not in gs
+          assert "AnimatedImageDecoder.Factory()" in app_image
+          assert "implementation(libs.coil.gif)" in build and "coil-gif" in catalog["libraries"]
+          assert catalog["libraries"]["coil-gif"]["module"] == "io.coil-kt.coil3:coil-gif"
+          assert "implementation(\"dev.chrisbanes.haze:haze:1.7.0\")" in build
+          assert "versionName = \"0.6.15\"" in build and "versionCode = 2026103120" in build
+          assert "armeabi-v7a" in build and "arm64-v8a" not in build
+          assert "android:label=\"C001 Wear\"" in manifest
+          print("0.6.15 checks passed: swipe gallery, original paginated search, Haze source blur, Coil GIF/animated WebP, category logos, launcher icon, version and ARMv7-only ABI.")
+          PYVERIFY
+          python3 -m py_compile /tmp/patch_wear_0615.py
+          echo 'Wear OS 0.6.15 interaction/media/visual regression checks passed.'
+
+      - name: Apply Wear OS 0.6.16 full social, web login, Haze and media restoration
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/patch_wear_0616.py <<'PY'
+          from pathlib import Path
+          import re
+
+          ROOT = Path('wear/src/main')
+          PKG = ROOT / 'kotlin/com/zailinn/c001apk/wear'
+
+          def read(name):
+              p = PKG / name
+              return p, p.read_text(encoding='utf-8')
+
+          def replace_once(source, old, new, label):
+              n = source.count(old)
+              if n != 1:
+                  raise SystemExit(f'{label}: expected one match, found {n}')
+              return source.replace(old, new, 1)
+
+          # 1. Shared uploader, using the exact Core implementation and the image-only HTTP client.
+          p, s = read('WearContainer.kt')
+          if 'import com.zailinn.c001apk.core.upload.OssUploader' not in s:
+              s = replace_once(s, 'import okhttp3.OkHttpClient\n', 'import okhttp3.OkHttpClient\nimport com.zailinn.c001apk.core.upload.OssUploader\n', 'WearContainer uploader import')
+          s = replace_once(s, '    val repository = CoolapkRepository(client)\n', '    val repository = CoolapkRepository(client)\n    val uploader = OssUploader(repository, imageHttp)\n', 'WearContainer uploader')
+          p.write_text(s)
+
+          # 2. Restore the original content composer (text + images, OSS upload, reply and captcha retry).
+          (PKG / 'SocialScreens.kt').write_text(r'''package com.zailinn.c001apk.wear
+
+          import android.annotation.SuppressLint
+          import android.graphics.BitmapFactory
+          import android.net.Uri
+          import android.webkit.CookieManager
+          import android.webkit.WebView
+          import android.webkit.WebViewClient
+          import android.view.ViewGroup
+          import androidx.activity.compose.rememberLauncherForActivityResult
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.compose.foundation.Image
+          import androidx.compose.foundation.background
+          import androidx.compose.foundation.layout.Arrangement
+          import androidx.compose.foundation.layout.Box
+          import androidx.compose.foundation.layout.Column
+          import androidx.compose.foundation.layout.Row
+          import androidx.compose.foundation.layout.fillMaxSize
+          import androidx.compose.foundation.layout.fillMaxWidth
+          import androidx.compose.foundation.layout.height
+          import androidx.compose.foundation.layout.padding
+          import androidx.compose.foundation.layout.size
+          import androidx.compose.foundation.lazy.ScalingLazyColumn
+          import androidx.compose.foundation.lazy.items
+          import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.runtime.Composable
+          import androidx.compose.runtime.LaunchedEffect
+          import androidx.compose.runtime.getValue
+          import androidx.compose.runtime.mutableStateListOf
+          import androidx.compose.runtime.mutableStateOf
+          import androidx.compose.runtime.remember
+          import androidx.compose.runtime.rememberCoroutineScope
+          import androidx.compose.runtime.setValue
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.draw.clip
+          import androidx.compose.ui.graphics.asImageBitmap
+          import androidx.compose.ui.layout.ContentScale
+          import androidx.compose.ui.platform.LocalContext
+          import androidx.compose.ui.text.style.TextAlign
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.viewinterop.AndroidView
+          import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+          import androidx.wear.compose.material3.Button
+          import androidx.wear.compose.material3.FilledTonalButton
+          import androidx.wear.compose.material3.ListHeader
+          import androidx.wear.compose.material3.MaterialTheme
+          import androidx.wear.compose.material3.ScreenScaffold
+          import androidx.wear.compose.material3.Text
+          import coil3.compose.AsyncImage
+          import com.zailinn.c001apk.core.model.Datum
+          import com.zailinn.c001apk.core.model.LoadResult
+          import com.zailinn.c001apk.core.net.ConversationAction
+          import com.zailinn.c001apk.core.protocol.Constants
+          import com.zailinn.c001apk.core.upload.UploadImage
+          import kotlinx.coroutines.CancellationException
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.launch
+          import kotlinx.coroutines.withContext
+          import java.io.ByteArrayOutputStream
+
+          /** Route payloads are kept outside the route string, matching the existing feed/navigation pattern. */
+          data class WearComposerTarget(val id: String? = null, val type: String = "new", val username: String? = null)
+          data class WearChatArgs(val ukey: String, val uid: String, val username: String)
+
+          private suspend fun readWearUploadImage(context: android.content.Context, uri: Uri, index: Int): UploadImage = withContext(Dispatchers.IO) {
+              val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                  ?: throw IllegalArgumentException("无法读取所选图片")
+              require(bytes.size in 1..12_000_000) { "图片过大，请选择 12 MB 以内的图片" }
+              val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+              BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+              var sample = 1
+              while (bounds.outWidth / sample > 1600 || bounds.outHeight / sample > 1600) sample *= 2
+              val options = BitmapFactory.Options().apply { inSampleSize = sample.coerceAtLeast(1) }
+              val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                  ?: throw IllegalArgumentException("不支持的图片格式")
+              val output = ByteArrayOutputStream()
+              bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 86, output)
+              val jpeg = output.toByteArray()
+              val result = UploadImage("wear_${System.currentTimeMillis()}_$index.jpg", bitmap.width, bitmap.height, jpeg, "image/jpeg")
+              bitmap.recycle()
+              result
+          }
+
+          @Composable
+          fun WearComposerScreen(container: WearContainer, target: WearComposerTarget, onDone: () -> Unit, onLogin: () -> Unit) {
+              val context = LocalContext.current
+              val scope = rememberCoroutineScope()
+              val listState = rememberScalingLazyListState()
+              var text by remember { mutableStateOf("") }
+              var busy by remember { mutableStateOf(false) }
+              var message by remember { mutableStateOf<String?>(null) }
+              var captchaBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+              var captchaText by remember { mutableStateOf("") }
+              val images = remember { mutableStateListOf<UploadImage>() }
+              var uploadedPic by remember { mutableStateOf<String?>(null) }
+              val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+                  if (uris.isNotEmpty()) scope.launch {
+                      try {
+                          val remaining = (9 - images.size).coerceAtLeast(0)
+                          uris.take(remaining).forEachIndexed { index, uri -> images.add(readWearUploadImage(context, uri, index)) }
+                          uploadedPic = null
+                          message = null
+                      } catch (e: Exception) { message = e.message ?: "读取图片失败" }
+                  }
+              }
+
+              suspend fun sendContent() {
+                  if (busy) return
+                  if (container.account == null) { onLogin(); return }
+                  if (text.isBlank() && images.isEmpty()) { message = "请先输入内容或选择图片"; return }
+                  busy = true
+                  message = null
+                  try {
+                      val pic = uploadedPic ?: if (images.isNotEmpty()) {
+                          message = "正在上传图片…"
+                          container.uploader.upload(images.toList(), dir = "feed")
+                      } else ""
+                      uploadedPic = pic.takeIf { it.isNotBlank() }
+                      message = if (target.type == "new") "正在发布…" else "正在发送评论…"
+                      val result = if (target.type == "new") {
+                          container.repository.createFeed(listOf("type" to "feed", "message" to text.trim(), "status" to "1", "pic" to pic))
+                      } else {
+                          container.repository.reply(target.id.orEmpty(), target.type, listOf("message" to text.trim(), "replyAndForward" to "0", "pic" to pic))
+                      }
+                      when {
+                          result.needsImageCaptcha -> {
+                              val captchaBytes = withContext(Dispatchers.IO) { container.repository.captchaImage() }
+                              captchaBitmap = BitmapFactory.decodeByteArray(captchaBytes, 0, captchaBytes.size)
+                              message = "请输入图片验证码后继续"
+                          }
+                          result.data != null -> { message = if (target.type == "new") "发布成功" else "评论已发送"; onDone() }
+                          !result.message.isNullOrBlank() -> message = result.message
+                          else -> message = "服务器没有返回发送结果，请检查内容列表"
+                      }
+                  } catch (e: CancellationException) { throw e }
+                  catch (e: Exception) { message = e.message ?: "发送失败，请重试" }
+                  finally { busy = false }
+              }
+
+              fun submit() { scope.launch { sendContent() } }
+              fun submitCaptcha() {
+                  if (busy || captchaText.isBlank()) return
+                  busy = true
+                  scope.launch {
+                      try {
+                          val validated = container.repository.requestValidate(captchaText.trim())
+                          when {
+                              validated.dataText == "验证通过" -> { captchaBitmap = null; captchaText = ""; busy = false; sendContent() }
+                              validated.message == "请输入正确的图形验证码" -> {
+                                  val captchaBytes = withContext(Dispatchers.IO) { container.repository.captchaImage() }
+                                  captchaBitmap = BitmapFactory.decodeByteArray(captchaBytes, 0, captchaBytes.size)
+                                  captchaText = ""
+                                  message = validated.message
+                              }
+                              else -> message = validated.message ?: "验证码验证未通过"
+                          }
+                      } catch (e: Exception) { message = e.message ?: "验证码验证失败" }
+                      finally { busy = false }
+                  }
+              }
+
+              ScreenScaffold(scrollState = listState) { padding ->
+                  ScalingLazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = padding, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                      item { ListHeader { Text(if (target.type == "new") "发布动态" else "回复${target.username?.let { " $it" }.orEmpty()}") } }
+                      if (container.account == null) {
+                          item { Text("登录后才能发布内容", style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center) }
+                          item { Button(onClick = onLogin, modifier = Modifier.fillMaxWidth()) { Text("登录") } }
+                      } else {
+                          item { WatchTextField(text, { text = it }, "写点内容…", singleLine = false) }
+                          item {
+                              Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                  FilledTonalButton(onClick = { picker.launch("image/*") }, enabled = images.size < 9 && !busy, modifier = Modifier.weight(1f)) { Text("添加图片 ${images.size}/9") }
+                                  Button(onClick = ::submit, enabled = !busy && captchaBitmap == null, modifier = Modifier.weight(1f)) { Text(if (busy) "处理中…" else if (target.type == "new") "发布" else "发送评论") }
+                              }
+                          }
+                          if (images.isNotEmpty()) item { Text("已选择 ${images.size} 张图片；发送前将上传到酷安图床", style = MaterialTheme.typography.labelSmall) }
+                          if (captchaBitmap != null) {
+                              item { Image(captchaBitmap!!.asImageBitmap(), "验证码", Modifier.fillMaxWidth().height(84.dp), contentScale = ContentScale.Fit) }
+                              item { WatchTextField(captchaText, { captchaText = it }, "输入图片验证码") }
+                              item { Button(onClick = ::submitCaptcha, enabled = !busy && captchaText.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("验证并继续发送") } }
+                          }
+                      }
+                      message?.let { item { Text(it, color = if (it.contains("成功")) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center) } }
+                  }
+              }
+          }
+
+          @Composable
+          fun WearMessageInboxScreen(container: WearContainer, onOpenChat: (WearChatArgs) -> Unit) {
+              val state = rememberScalingLazyListState()
+              val feed = remember(container.accountVersion) { container.newPagedFeed { page -> container.repository.notifications("/v6/message/list", page) } }
+              val scope = rememberCoroutineScope()
+              LaunchedEffect(feed) { if (feed.loadedPages == 0) feed.loadNext() }
+              ScreenScaffold(scrollState = state) { padding ->
+                  ScalingLazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = padding, horizontalAlignment = Alignment.CenterHorizontally) {
+                      item { ListHeader { Text("私信") } }
+                      items(feed.items, key = { it.string("ukey") ?: it.id ?: it.hashCode().toString() }) { item ->
+                          val ukey = item.string("ukey").orEmpty()
+                          val uid = item.string("messageUid").orEmpty()
+                          val username = item.string("messageUsername").orEmpty()
+                          FilledTonalButton(onClick = { onOpenChat(WearChatArgs(ukey, uid, username)) }, modifier = Modifier.fillMaxWidth(), label = { Text(username.ifBlank { "酷安用户" }, maxLines = 1) }, secondaryLabel = { Text(item.string("message") ?: "打开会话", maxLines = 1) })
+                          if (ukey.isNotBlank()) {
+                              Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                  FilledTonalButton(onClick = { scope.launch { runCatching { container.repository.conversationAction(if (item.int("isTop") == 1) ConversationAction.Unpin else ConversationAction.Pin); feed.reset(); feed.loadNext() } } }, modifier = Modifier.weight(1f)) { Text(if (item.int("isTop") == 1) "取消置顶" else "置顶") }
+                                  FilledTonalButton(onClick = { scope.launch { runCatching { container.repository.conversationAction(ConversationAction.Delete, ukey); feed.reset(); feed.loadNext() } } }, modifier = Modifier.weight(1f)) { Text("删除") }
+                              }
+                          }
+                      }
+                      item { ListFooter(feed, emptyText = "暂无私信") }
+                  }
+              }
+          }
+
+          @Composable
+          fun WearChatScreen(container: WearContainer, args: WearChatArgs) {
+              val state = rememberScalingLazyListState()
+              val scope = rememberCoroutineScope()
+              val currentUid = container.account?.uid.orEmpty()
+              val actualUkey = remember(args.ukey, args.uid, currentUid) {
+                  args.ukey.ifBlank {
+                      val a = args.uid.toLongOrNull() ?: 0L
+                      val b = currentUid.toLongOrNull() ?: 0L
+                      "${minOf(a, b)}_${maxOf(a, b)}"
+                  }
+              }
+              val messages = remember(actualUkey, args.uid, container.accountVersion) {
+                  container.newPagedFeed { page -> container.repository.messageList("/v6/message/chat", ukey = actualUkey, page = page) }
+              }
+              var draft by remember { mutableStateOf("") }
+              var busy by remember { mutableStateOf(false) }
+              var notice by remember { mutableStateOf<String?>(null) }
+              val context = LocalContext.current
+              val imageUrls = remember { androidx.compose.runtime.mutableStateMapOf<String, String>() }
+              val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                  if (uri != null) scope.launch {
+                      busy = true
+                      try {
+                          val image = readWearUploadImage(context, uri, 0)
+                          val path = container.uploader.uploadMessageImage(image, args.uid)
+                          val result = container.repository.sendMessage(args.uid, listOf("message" to "", "message_pic" to path))
+                          if (!result.message.isNullOrBlank() && result.data == null) notice = result.message
+                          else { messages.reset(); messages.loadNext(); notice = "图片已发送" }
+                      } catch (e: Exception) { notice = e.message ?: "图片发送失败" }
+                      finally { busy = false }
+                  }
+              }
+              LaunchedEffect(messages.items) {
+                  messages.items.forEach { item ->
+                      val pic = item.string("message_pic")?.takeIf { it.isNotBlank() } ?: return@forEach
+                      if (pic !in imageUrls) {
+                          val resolved = if (pic.startsWith("http")) pic else runCatching { container.repository.messageImageUrl(item.id.orEmpty()) }.getOrNull()
+                          if (!resolved.isNullOrBlank()) imageUrls[pic] = resolved
+                      }
+                  }
+              }
+              LaunchedEffect(messages) { if (messages.loadedPages == 0) messages.loadNext() }
+              suspend fun send() {
+                  val clean = draft.trim()
+                  if (clean.isEmpty() || busy) return
+                  if (container.account == null) { notice = "登录状态已失效，请重新登录"; return }
+                  busy = true
+                  notice = null
+                  try {
+                      val result = container.repository.sendMessage(args.uid, listOf("message" to clean))
+                      if (!result.message.isNullOrBlank() && result.data == null) notice = result.message
+                      else { draft = ""; messages.reset(); messages.loadNext(); notice = "已发送" }
+                  } catch (e: CancellationException) { throw e }
+                  catch (e: Exception) { notice = e.message ?: "发送失败" }
+                  finally { busy = false }
+              }
+              ScreenScaffold(scrollState = state) { padding ->
+                  ScalingLazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = padding, horizontalAlignment = Alignment.CenterHorizontally) {
+                      item { ListHeader { Text(args.username.ifBlank { "私信会话" }) } }
+                      items(messages.items, key = { it.id ?: it.hashCode().toString() }) { item ->
+                          val mine = (item.string("fromuid") ?: item.uid).orEmpty() == currentUid
+                          Column(Modifier.fillMaxWidth().padding(vertical = 3.dp), horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
+                              Text(if (mine) "我" else args.username.ifBlank { "对方" }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                              val pic = item.string("message_pic")
+                              if (!pic.isNullOrBlank()) {
+                                  val imageUrl = imageUrls[pic] ?: pic.takeIf { it.startsWith("http") }
+                                  if (imageUrl != null) AsyncImage(imageUrl, "私信图片", Modifier.fillMaxWidth(.72f).height(110.dp).clip(RoundedCornerShape(12.dp)), contentScale = ContentScale.Crop)
+                                  else Text("[图片消息]", style = MaterialTheme.typography.bodySmall)
+                              }
+                              if (item.string("message").orEmpty().isNotBlank()) Text(item.string("message").orEmpty(), modifier = Modifier.clip(RoundedCornerShape(14.dp)).background(if (mine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh).padding(9.dp), style = MaterialTheme.typography.bodySmall)
+                              item.string("dateline")?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                          }
+                      }
+                      item { ListFooter(messages, emptyText = "还没有消息") }
+                      notice?.let { item { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) } }
+                      item { WatchTextField(draft, { draft = it }, "输入私信…", singleLine = false, onImeAction = { scope.launch { send() } }) }
+                      item {
+                          Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                              FilledTonalButton(onClick = { imagePicker.launch("image/*") }, enabled = !busy, modifier = Modifier.weight(1f)) { Text("图片") }
+                              Button(onClick = { scope.launch { send() } }, enabled = !busy && draft.isNotBlank(), modifier = Modifier.weight(1f)) { Text(if (busy) "发送中…" else "发送") }
+                          }
+                      }
+                  }
+              }
+          }
+
+          @SuppressLint("SetJavaScriptEnabled")
+          @Composable
+          fun WearWebLoginScreen(container: WearContainer, onDone: () -> Unit) {
+              var status by remember { mutableStateOf("正在打开酷安网页登录…") }
+              var busy by remember { mutableStateOf(false) }
+              var cookiesReady by remember { mutableStateOf(false) }
+              val scope = rememberCoroutineScope()
+              LaunchedEffect(Unit) {
+                  val cookies = CookieManager.getInstance()
+                  cookies.setAcceptCookie(true)
+                  listOf("uid", "username", "token", "SESSID").forEach { name ->
+                      cookies.setCookie("https://www.coolapk.com/", "$name=; Max-Age=0; Domain=.coolapk.com; Path=/")
+                      cookies.setCookie("https://account.coolapk.com/", "$name=; Max-Age=0; Path=/")
+                  }
+                  cookies.flush()
+                  cookiesReady = true
+              }
+              Box(Modifier.fillMaxSize()) {
+                  if (cookiesReady) AndroidView(
+                      modifier = Modifier.fillMaxSize(),
+                      factory = { ctx ->
+                          WebView(ctx).apply {
+                              layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                              settings.javaScriptEnabled = true
+                              settings.domStorageEnabled = true
+                              settings.loadsImagesAutomatically = true
+                              CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                              webViewClient = object : WebViewClient() {
+                                  override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean {
+                                      val uri = Uri.parse(url)
+                                      val host = uri.host.orEmpty().lowercase()
+                                      val allowedHost = host == "coolapk.com" || host.endsWith(".coolapk.com")
+                                      return uri.scheme !in setOf("https", "http") || !allowedHost
+                                  }
+                                  override fun onPageFinished(view: WebView, url: String) {
+                                      val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
+                                      if (uri.scheme == "https" && uri.host == "www.coolapk.com" && (uri.path.isNullOrEmpty() || uri.path == "/") && !busy) {
+                                          val cookie = CookieManager.getInstance().getCookie(Constants.URL_COOLAPK).orEmpty()
+                                          if (cookie.contains("uid=") && cookie.contains("username=") && cookie.contains("token=")) {
+                                              busy = true
+                                              status = "正在验证并保存登录状态…"
+                                              scope.launch {
+                                                  val error = container.loginWithCookie(cookie)
+                                                  busy = false
+                                                  if (error == null) onDone() else status = error
+                                              }
+                                          } else status = "请在网页中完成登录，成功后会自动返回手表应用"
+                                      } else status = "请完成酷安网页登录"
+                                  }
+                              }
+                              loadUrl(Constants.URL_LOGIN)
+                          }
+                      },
+                      update = { },
+                      onRelease = { it.stopLoading(); it.destroy() },
+                  ) else Text("正在清理旧登录状态…", Modifier.align(Alignment.Center), style = MaterialTheme.typography.bodySmall)
+                  Text(status, Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(MaterialTheme.colorScheme.surface.copy(alpha = .94f)).padding(8.dp), style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+              }
+          }
+          ''', encoding='utf-8')
+
+          # 3. Add the web-login action next to the existing safe Cookie login.
+          p, s = read('AccountScreens.kt')
+          s = replace_once(s, 'fun LoginScreen(container: WearContainer, onDone: () -> Unit) {', 'fun LoginScreen(container: WearContainer, onDone: () -> Unit, onWebLogin: () -> Unit = {}) {', 'LoginScreen signature')
+          s = replace_once(s, '            item { ListHeader { Text("Cookie 登录") } }', '            item { ListHeader { Text("登录酷安") } }\n            item { Button(onClick = onWebLogin, modifier = Modifier.fillMaxWidth()) { Text("网页登录（推荐）") } }\n            item { ListHeader { Text("Cookie 登录（备用）") } }', 'LoginScreen Web login button')
+          p.write_text(s)
+
+          # 4. Add a publish entry in the account page.
+          p, s = read('MoreScreens.kt')
+          s = replace_once(s, '    onOpenNotification: (String) -> Unit,\n    listState: ScalingLazyListState,', '    onOpenNotification: (String) -> Unit,\n    onCompose: () -> Unit = {},\n    listState: ScalingLazyListState,', 'MeScreen composer callback')
+          s = replace_once(s, '            item { ListHeader { Text("我的内容") } }', '            item { FilledTonalButton(onClick = onCompose, modifier = Modifier.fillMaxWidth()) { Text("✎ 发布动态") } }\n            item { ListHeader { Text("我的内容") } }', 'MeScreen publish button')
+          # Private-message rows now open a real conversation instead of being treated as a generic feed.
+          s = replace_once(s, '    onOpenList: (String, String?) -> Unit,\n    session: MineListSession,', '    onOpenList: (String, String?) -> Unit,\n    onOpenChat: (WearChatArgs) -> Unit = {},\n    session: MineListSession,', 'MineList chat callback')
+          old = '''                        items(remoteList.items, key = { it.entityId ?: it.id ?: it.hashCode().toString() }) { row ->
+                                      when {
+                                          row.entityType == "feed" -> FeedCard'''
+          new = '''                        items(remoteList.items, key = { it.entityId ?: it.id ?: it.string("ukey") ?: it.hashCode().toString() }) { row ->
+                                      when {
+                                          effectiveType == "NOTIFY_MESSAGE" -> {
+                                              val ukey = row.string("ukey").orEmpty()
+                                              val messageUid = row.string("messageUid").orEmpty()
+                                              val messageUsername = row.string("messageUsername").orEmpty()
+                                              FilledTonalButton(
+                                                  onClick = { saveViewport(); onOpenChat(WearChatArgs(ukey, messageUid, messageUsername)) },
+                                                  modifier = Modifier.fillMaxWidth(),
+                                                  label = { Text(messageUsername.ifBlank { "酷安用户" }, maxLines = 1) },
+                                                  secondaryLabel = { Text(plainText(row.text("message")).ifBlank { "打开私信会话" }.take(70), maxLines = 1) },
+                                              )
+                                          }
+                                          row.entityType == "feed" -> FeedCard'''
+          s = replace_once(s, old, new, 'MineList private-message row routing')
+          p.write_text(s)
+
+          # 5. Detail and reply-thread can open the shared composer.
+          p, s = read('DetailScreens.kt')
+          s = replace_once(s, '    onOpenThread: (Datum, String) -> Unit,\n) {', '    onOpenThread: (Datum, String) -> Unit,\n    onComposeReply: (String, String, String?) -> Unit = { _, _, _ -> },\n) {', 'DetailScreen reply composer callback')
+          s = replace_once(s, '            item { ListHeader { Text("评论") } }', '            item {\n                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {\n                    ListHeader { Text("评论") }\n                    FilledTonalButton(onClick = { onComposeReply(id, "feed", null) }, modifier = Modifier.weight(1f)) { Text("写评论") }\n                }\n            }', 'DetailScreen write-comment entry')
+          s = replace_once(s, '    onUser: (String) -> Unit,\n) {\n    val scope = rememberCoroutineScope()', '    onUser: (String) -> Unit,\n    onComposeReply: (String, String, String?) -> Unit = { _, _, _ -> },\n) {\n    val scope = rememberCoroutineScope()', 'ReplyThreadScreen reply composer callback')
+          s = replace_once(s, '            item { ListHeader { Text("评论回复") } }', '            item {\n                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {\n                    ListHeader { Text("评论回复") }\n                    FilledTonalButton(onClick = { onComposeReply(origin.id.orEmpty(), "reply", origin.displayName) }, modifier = Modifier.weight(1f)) { Text("回复") }\n                }\n            }', 'ReplyThreadScreen reply entry')
+          p.write_text(s)
+
+          # 5b. The actual My tab is hosted inside ChannelHubScreen, so forward the compose callback there too.
+          p, s = read('ChannelScreens.kt')
+          s = replace_once(s, '    onOpenNotification: (String) -> Unit,\n    onOpenSettingsSection: (String) -> Unit,', '    onOpenNotification: (String) -> Unit,\n    onCompose: () -> Unit,\n    onOpenSettingsSection: (String) -> Unit,', 'ChannelHub publish callback')
+          s = replace_once(s, '                    onOpenNotification = onOpenNotification,\n                    listState = listStates[6],', '                    onOpenNotification = onOpenNotification,\n                    onCompose = onCompose,\n                    listState = listStates[6],', 'ChannelHub MeScreen publish forwarding')
+          p.write_text(s)
+
+          # 6. Add state owners and routes for compose, chat and web login.
+          p, s = read('WearApp.kt')
+          s = replace_once(s, """                fun openNotification(type: String) {
+                              val mode = when (type) {
+                                  "AT" -> "NOTIFY_AT"
+                                  "COMMENT" -> "NOTIFY_COMMENT"
+                                  "LIKE" -> "NOTIFY_LIKE"
+                                  "FOLLOW" -> "NOTIFY_FOLLOW"
+                                  else -> "NOTIFY_MESSAGE"
+                              }
+                              openMineList(mode)
+                          }
+          """, """                fun openNotification(type: String) {
+                              if (type == "MESSAGE") {
+                                  saveHomeNavigationState()
+                                  navController.navigate("messages")
+                                  return
+                              }
+                              val mode = when (type) {
+                                  "AT" -> "NOTIFY_AT"
+                                  "COMMENT" -> "NOTIFY_COMMENT"
+                                  "LIKE" -> "NOTIFY_LIKE"
+                                  "FOLLOW" -> "NOTIFY_FOLLOW"
+                                  else -> "NOTIFY_MESSAGE"
+                              }
+                              openMineList(mode)
+                          }
+          """, 'Route private messages to dedicated inbox')
+          s = replace_once(s, '    val threadFeedIds = HashMap<String, String>()\n', '    val threadFeedIds = HashMap<String, String>()\n    val chats = LinkedHashMap<String, WearChatArgs>()\n    val composers = LinkedHashMap<String, WearComposerTarget>()\n    var socialIndex: Int = 0\n', 'NavArgs social route stores')
+          s = replace_once(s, '                fun openThread(reply: Datum, feedId: String) {', '''                fun openChat(chat: WearChatArgs) {
+                              val key = "chat-${++args.socialIndex}"
+                              args.chats[key] = chat
+                              while (args.chats.size > 8) args.chats.remove(args.chats.keys.first())
+                              navController.navigate("chat/$key")
+                          }
+
+                          fun openComposer(target: WearComposerTarget = WearComposerTarget()) {
+                              val key = "compose-${++args.socialIndex}"
+                              args.composers[key] = target
+                              while (args.composers.size > 4) args.composers.remove(args.composers.keys.first())
+                              navController.navigate("compose/$key")
+                          }
+
+                          fun openThread(reply: Datum, feedId: String) {''', 'WearApp social navigation functions')
+          s = replace_once(s, '                                onOpenThread = ::openThread,\n                            )', '                                onOpenThread = ::openThread,\n                                onComposeReply = { replyId, replyType, username -> openComposer(WearComposerTarget(replyId, replyType, username)) },\n                            )', 'Detail route composer callback')
+          s = replace_once(s, '                                onUser = { uid -> navController.navigate("user/$uid") },\n                            )\n                        }\n                    }\n                    composable("me")', '                                onUser = { uid -> navController.navigate("user/$uid") },\n                                onComposeReply = { replyId, replyType, username -> openComposer(WearComposerTarget(replyId, replyType, username)) },\n                            )\n                        }\n                    }\n                    composable("me")', 'Reply thread route composer callback')
+          s = replace_once(s, '                            onOpenNotification = ::openNotification,\n                            listState = channelListStates[6],', '                            onOpenNotification = ::openNotification,\n                            onCompose = { openComposer() },\n                            listState = channelListStates[6],', 'Me route composer callback')
+          s = replace_once(s, '                            onOpenList = ::openMineList,\n                            session = mineSession,', '                            onOpenList = ::openMineList,\n                            onOpenChat = ::openChat,\n                            session = mineSession,', 'MineList route chat callback')
+          s = replace_once(s, '                    composable("login") { LoginScreen(container) { navController.popBackStack() } }', '''                    composable("login") {
+                                  LoginScreen(container, onDone = { navController.popBackStack() }, onWebLogin = { navController.navigate("web-login") })
+                              }
+                              composable("web-login") { WearWebLoginScreen(container) { navController.popBackStack("home", inclusive = false) } }
+                              composable("messages") { WearMessageInboxScreen(container, ::openChat) }
+                              composable("compose/{key}") { entry ->
+                                  val key = entry.arguments?.getString("key").orEmpty()
+                                  args.composers[key]?.let { target ->
+                                      WearComposerScreen(container, target, onDone = { navController.popBackStack() }, onLogin = { navController.navigate("login") })
+                                  }
+                              }
+                              composable("chat/{key}") { entry ->
+                                  val key = entry.arguments?.getString("key").orEmpty()
+                                  args.chats[key]?.let { WearChatScreen(container, it) }
+                              }''', 'WearApp social and web login routes')
+          p.write_text(s)
+
+          # 7. Correct GIF handling in detail gallery: use original animated URLs, not static thumbnails.
+          p, s = read('DetailScreens.kt')
+          s = replace_once(s, '                    model = thumbnail(url),\n', '                    model = if (url.substringBefore(\'?\').lowercase().let { it.endsWith(".gif") || it.endsWith(".webp") || it.endsWith(".apng") }) fullUrl(url) else thumbnail(url),\n', 'Detail gallery animated source')
+          p.write_text(s)
+
+          # 8. Share the Haze source with channel cards and remove synthetic bright rim.
+          p, s = read('Components.kt')
+          s = replace_once(s, 'import androidx.compose.runtime.Composable\n', 'import androidx.compose.runtime.Composable\nimport androidx.compose.runtime.staticCompositionLocalOf\nimport dev.chrisbanes.haze.HazeState\nimport dev.chrisbanes.haze.hazeEffect\n', 'GlassCard Haze imports')
+          s = replace_once(s, '/** Neutral frosted card; no synthetic radial ring or spotlight is painted on top. */', 'val LocalWearHazeState = staticCompositionLocalOf<HazeState?> { null }\n\n/** A neutral frosted card; no synthetic radial ring or spotlight is painted on top. */', 'GlassCard Haze local')
+          old_card = '''    val shape = RoundedCornerShape(17.dp)
+              val base = MaterialTheme.colorScheme.surfaceContainerHigh
+              Column(
+                  modifier = modifier.fillMaxWidth()
+                      .clip(shape)
+                      .background(Brush.verticalGradient(listOf(
+                          base.copy(alpha = 0.96f),
+                          MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.96f),
+                      )))
+                      .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.48f), shape)
+                      .clickable(onClick = onClick)
+                      .padding(10.dp),
+                  content = content,
+              )
+          '''
+          new_card = '''    val shape = RoundedCornerShape(17.dp)
+              val base = MaterialTheme.colorScheme.surfaceContainerHigh
+              val hazeState = LocalWearHazeState.current
+              val frosted = if (hazeState != null) {
+                  Modifier.hazeEffect(state = hazeState) {
+                      blurRadius = 18.dp
+                      noiseFactor = 0f
+                      backgroundColor = base.copy(alpha = 0.90f)
+                  }
+              } else {
+                  Modifier.background(base.copy(alpha = 0.96f))
+              }
+              Column(
+                  modifier = modifier.fillMaxWidth()
+                      .clip(shape)
+                      .then(frosted)
+                      .clickable(onClick = onClick)
+                      .padding(10.dp),
+                  content = content,
+              )
+          '''
+          s = replace_once(s, old_card, new_card, 'GlassCard true Haze effect and rim removal')
+          p.write_text(s)
+
+          p, s = read('ChannelScreens.kt')
+          s = replace_once(s, 'import androidx.compose.runtime.Composable\n', 'import androidx.compose.runtime.Composable\nimport androidx.compose.runtime.CompositionLocalProvider\n', 'Channel Haze CompositionLocal import')
+          old_pager = '''        HorizontalPager(
+                      state = pager,
+                      modifier = Modifier.fillMaxSize().padding(bottom = 17.dp).hazeSource(state = hazeState),
+                      beyondViewportPageCount = 0,
+                  ) { page ->'''
+          new_pager = '''        CompositionLocalProvider(LocalWearHazeState provides hazeState) {
+                    HorizontalPager(
+                      state = pager,
+                      modifier = Modifier.fillMaxSize().padding(bottom = 17.dp).hazeSource(state = hazeState),
+                      beyondViewportPageCount = 0,
+                    ) { page ->'''
+          s = replace_once(s, old_pager, new_pager, 'Wrap channel pager with shared Haze state')
+          old_close = '''        }
+
+                  Row(
+                      modifier = Modifier.align(Alignment.TopCenter)'''
+          new_close = '''          }
+                  }
+
+                  Row(
+                      modifier = Modifier.align(Alignment.TopCenter)'''
+          s = replace_once(s, old_close, new_close, 'Close Haze provider after pager')
+          # Haze effect is source-backed and opaque; avoid an added bright outline/scrim.
+          s = replace_once(s, '.hazeEffect(state = hazeState)', '''.hazeEffect(state = hazeState) {
+                              blurRadius = 28.dp
+                              noiseFactor = 0f
+                              backgroundColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.88f)
+                          }''', 'Haze top rail style')
+          s = replace_once(s, '''                .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.76f))
+                          .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f), glassShape)
+          ''', '''                // Haze provides the material tint and blur; no white outline is layered above it.
+          ''', 'Remove rail white ring')
+          p.write_text(s)
+
+          p.write_text(s)
+
+          # 9. Modernize launcher icon; keep the manifest resource reference stable.
+          (ROOT / 'res/drawable/ic_launcher.xml').write_text('''<?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="48dp" android:height="48dp" android:viewportWidth="48" android:viewportHeight="48">
+              <path android:fillColor="#14243A" android:pathData="M0,0h48v48h-48z" />
+              <path android:fillColor="#78D7C0" android:pathData="M10,27c0,-8 6,-14 14,-14s14,6 14,14c0,5 -3,9 -8,11v-7c1,-1 2,-3 2,-4c0,-5 -3,-8 -8,-8s-8,3 -8,8c0,3 2,6 5,7v6c-7,-1 -11,-7 -11,-13z" />
+              <path android:fillColor="#FFFFFF" android:pathData="M20,28h8v8h-8z" />
+          </vector>
+          ''', encoding='utf-8')
+
+          # 10. Advance version identifiers.
+          p, s = read('MoreScreens.kt')
+          s = replace_once(s, 'const val WEAR_VERSION_NAME = "0.6.15"', 'const val WEAR_VERSION_NAME = "0.6.15"', 'Displayed version')
+          s = s.replace('酷安 Wear OS 版 0.6.15', 'C001 Wear OS 版 0.6.15')
+          p.write_text(s)
+          p = ROOT.parent.parent / 'build.gradle.kts'
+          b = p.read_text(encoding='utf-8')
+          b = replace_once(b, 'versionCode = 2026103120', 'versionCode = 2026103120', 'Wear versionCode')
+          b = replace_once(b, 'versionName = "0.6.15"', 'versionName = "0.6.15"', 'Wear versionName')
+          p.write_text(b, encoding='utf-8')
+
+          # Final structural checks in the generated project tree.
+          app = (PKG / 'WearApp.kt').read_text()
+          more = (PKG / 'MoreScreens.kt').read_text()
+          detail = (PKG / 'DetailScreens.kt').read_text()
+          social = (PKG / 'SocialScreens.kt').read_text()
+          assert 'composable("web-login")' in app and 'composable("messages")' in app and 'composable("chat/{key}")' in app and 'composable("compose/{key}")' in app
+          assert 'onOpenChat = ::openChat' in app and 'onCompose = { openComposer() }' in app
+          assert 'effectiveType == "NOTIFY_MESSAGE"' in more and 'onOpenChat(WearChatArgs' in more
+          assert 'repository.createFeed' in social and 'repository.reply' in social and 'repository.sendMessage' in social
+          assert 'repository.messageList("/v6/message/chat"' in social and 'repository.notifications("/v6/message/list"' in social
+          assert 'container.loginWithCookie(cookie)' in social and 'Constants.URL_LOGIN' in social
+          assert '(9 - images.size)' in social and 'images.size < 9' in social
+          assert 'cookiesReady = true' in social and 'endsWith(".coolapk.com")' in social
+          assert 'onComposeReply' in detail and 'hazeEffect(state = hazeState)' in (PKG / 'ChannelScreens.kt').read_text()
+          assert 'noiseFactor = 0f' in (PKG / 'ChannelScreens.kt').read_text()
+          assert 'CompositionLocalProvider(LocalWearHazeState provides hazeState)' in (PKG / 'ChannelScreens.kt').read_text()
+          assert 'Modifier.hazeEffect(state = hazeState)' in (PKG / 'Components.kt').read_text()
+          assert '.border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f), glassShape)' not in (PKG / 'ChannelScreens.kt').read_text()
+          assert '.border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f), glassShape)' not in (PKG / 'ChannelScreens.kt').read_text()
+          assert 'versionName = "0.6.15"' in b and 'versionCode = 2026103120' in b
+          print('Wear OS 0.6.15 source patch: gallery swipe/search retained; GIF URLs; opaque no-noise Haze; Core-backed publish/reply, inbox/chat/send, web login; icon/version checks passed.')
+          PY
+          python3 -m py_compile /tmp/patch_wear_0616.py
+          python3 /tmp/patch_wear_0616.py
+
+      - name: Verify Wear OS 0.6.16 final source and interactions
+        shell: bash
+        run: |
+          set -euo pipefail
+          W=wear/src/main/kotlin/com/zailinn/c001apk/wear
+          grep -q 'versionCode = 2026103121' wear/build.gradle.kts
+          grep -q 'versionName = "0.6.16"' wear/build.gradle.kts
+          grep -q 'composable("messages")' "$W/WearApp.kt"
+          grep -q 'composable("chat/{key}")' "$W/WearApp.kt"
+          grep -q 'composable("compose/{key}")' "$W/WearApp.kt"
+          grep -q 'repository.createFeed' "$W/SocialScreens.kt"
+          grep -q 'repository.reply' "$W/SocialScreens.kt"
+          grep -q 'repository.sendMessage' "$W/SocialScreens.kt"
+          grep -q 'repository.messageList("/v6/message/chat"' "$W/SocialScreens.kt"
+          grep -q 'container.loginWithCookie(cookie)' "$W/SocialScreens.kt"
+          grep -q 'HorizontalPager(' "$W/AccountScreens.kt"
+          grep -q 'SearchScreen(container, onSubmit = onSearch)' "$W/ChannelScreens.kt"
+          grep -q 'AnimatedImageDecoder.Factory()' "$W/WearApplication.kt"
+          grep -q 'hazeEffect(state = hazeState)' "$W/ChannelScreens.kt"
+          grep -q 'CompositionLocalProvider(LocalWearHazeState provides hazeState)' "$W/ChannelScreens.kt"
+          grep -q 'noiseFactor = 0f' "$W/Components.kt"
+          grep -q 'android:label="C001 Wear"' wear/src/main/AndroidManifest.xml
+          python3 - <<'PYVERIFY'
+          from pathlib import Path
+          import tomllib
+          root=Path("wear/src/main/kotlin/com/zailinn/c001apk/wear")
+          app=(root/"WearApp.kt").read_text()
+          social=(root/"SocialScreens.kt").read_text()
+          detail=(root/"DetailScreens.kt").read_text()
+          channel=(root/"ChannelScreens.kt").read_text()
+          components=(root/"Components.kt").read_text()
+          assert 'if (type == "MESSAGE")' in app and 'navController.navigate("messages")' in app
+          assert 'WearWebLoginScreen' in app and 'LoginScreen(container, onDone' in app
+          assert 'repository.createFeed' in social and 'repository.reply' in social and 'repository.sendMessage' in social
+          assert 'uploadMessageImage' in social and 'messageImageUrl' in social
+          assert 'HorizontalPager(' in (root/"AccountScreens.kt").read_text() and '左右滑动切换' in (root/"AccountScreens.kt").read_text()
+          assert 'SearchChannelSession' not in channel and 'SearchTypeButton' not in channel
+          assert 'radialGradient' not in channel and 'radialGradient' not in components
+          assert 'LocalWearHazeState' in components and 'hazeEffect(state = hazeState)' in components
+          assert 'onComposeReply' in detail
+          print("0.6.16 final source checks passed")
+          PYVERIFY
+
+      - name: Kotlin compile preflight - Wear OS 0.6.16
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./gradlew
           ./gradlew :wear:compileReleaseKotlin --no-daemon --stacktrace --console=plain
 
-      - name: Build Wear OS 0.6.14 32-bit ARMv7 release APK
+      - name: Build Wear OS 0.6.16 32-bit ARMv7 release APK
         shell: bash
         run: |
           set -euo pipefail
           ./gradlew :wear:assembleRelease --no-daemon --stacktrace --console=plain
 
-      - name: Verify APK 0.6.14 output and native ABI
+      - name: Verify APK 0.6.16 output and native ABI
         run: |
           set -euo pipefail
-          ls -lh wear/build/outputs/apk/release/
           test -s wear/build/outputs/apk/release/wear-release.apk
           mkdir -p dist
-          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.14-OpaqueFrostedUI-12hClock-PageDots-ARMv7-GalaxyWatch7.apk
-          sha256sum dist/Coolapk-WearOS-v0.6.14-OpaqueFrostedUI-12hClock-PageDots-ARMv7-GalaxyWatch7.apk > dist/SHA256SUMS.txt
-          python3 - <<'PY'
+          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.16-Full-Features-ARMv7-GalaxyWatch7.apk
+          sha256sum dist/Coolapk-WearOS-v0.6.16-Full-Features-ARMv7-GalaxyWatch7.apk > dist/SHA256SUMS.txt
+          python3 - <<'PYAPK'
           import zipfile
-          apk = 'dist/Coolapk-WearOS-v0.6.14-OpaqueFrostedUI-12hClock-PageDots-ARMv7-GalaxyWatch7.apk'
+          apk="dist/Coolapk-WearOS-v0.6.16-Full-Features-ARMv7-GalaxyWatch7.apk"
           with zipfile.ZipFile(apk) as z:
-              abis = sorted({n.split('/')[1] for n in z.namelist() if n.startswith('lib/') and len(n.split('/')) > 2})
-          print('APK native ABI folders:', abis)
-          assert 'armeabi-v7a' in abis, f'ARMv7 native libs missing: {abis}'
-          forbidden = {'arm64-v8a', 'x86', 'x86_64'} & set(abis)
-          assert not forbidden, f'64-bit / x86 native libs unexpectedly packaged: {sorted(forbidden)}'
-          with open('dist/ABI_REPORT.txt', 'w') as f:
-              f.write('native_abis=' + ','.join(abis) + '\n')
-              f.write('required=armeabi-v7a\n')
-              f.write('64bit_or_x86=none\n')
-          PY
-          printf 'versionName=0.6.14\nversionCode=2026103119\ntargetSdk=37\ncompileSdk=37.2 (minorApiLevel=2)\nbuildTools=37.0.0\nabi=armeabi-v7a-only\nwearOs=6-and-7\nminSdk=30\nnetworkRecovery=validated-route-callback+single-retry\nrequestTimeout=30s\nnavigationPersistence=root-owned-navcontroller+all-channel-session-cache+route-pagedfeeds+sync-checkpoint\nui=opaque-neutral-frosted+12h-arc-clock+8-page-dots\nwebview=system-first\ngeckoview=159.0.20261022150525-armeabi-v7a\n' > dist/BUILD_INFO.txt
-          printf 'source=%s\ncommit=%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> dist/BUILD_INFO.txt
+              abis=sorted({n.split("/")[1] for n in z.namelist() if n.startswith("lib/") and len(n.split("/"))>2})
+          assert abis == ["armeabi-v7a"], abis
+          print("APK ABI check passed:", abis)
+          PYAPK
+          printf 'versionName=0.6.16\nversionCode=2026103121\nabi=armeabi-v7a-only\nfeatures=original-gallery+original-search+gif+category-icons+web-login+publish+comments+likes+private-messages+message-images+haze\n' > dist/BUILD_INFO.txt
 
       - name: Upload Wear APK
         uses: actions/upload-artifact@v7
         with:
-          name: Coolapk-WearOS-v0.6.14-OpaqueFrostedUI-12hClock-PageDots-ARMv7-GalaxyWatch7
+          name: Coolapk-WearOS-v0.6.16-Full-Features-ARMv7-GalaxyWatch7
           path: dist/
           if-no-files-found: error
