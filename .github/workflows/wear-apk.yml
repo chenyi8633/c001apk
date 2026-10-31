@@ -1,9 +1,9 @@
-# 酷安 Wear OS 0.6.0 / Galaxy Watch7 我的页面、设置与评论增强版自动编译工作流
+# 酷安 Wear OS 0.6.1 / Galaxy Watch7 我的页面、设置与评论增强版自动编译工作流
 # 使用：上传到 .github/workflows/wear-apk.yml 后提交到 main。
 # 从你 Fork 仓库当前提交构建，保留 :core 网络层；手表端单独适配圆屏 UI。
 
-name: Build Coolapk Wear OS v0.6.0 - Account, Settings and Comments - Galaxy Watch7
-run-name: Wear OS 0.6.0 我的页面、设置和评论验证构建
+name: Build Coolapk Wear OS v0.6.1 - Top Navigation and IME Fix - Galaxy Watch7
+run-name: Wear OS 0.6.1 顶部导航、输入法与界面动效修复构建
 
 on:
   push:
@@ -84,8 +84,8 @@ jobs:
                   applicationId = "com.zailinn.c001apk.wear"
                   minSdk = 30
                   targetSdk = 36
-                  versionCode = 2026103104
-                  versionName = "0.6.0"
+                  versionCode = 2026103105
+                  versionName = "0.6.1"
               }
 
               compileOptions {
@@ -346,6 +346,13 @@ jobs:
           cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt <<'WEAR_EOF'
           package com.zailinn.c001apk.wear
           
+          import androidx.compose.animation.AnimatedContent
+          import androidx.compose.animation.animateContentSize
+          import androidx.compose.animation.fadeIn
+          import androidx.compose.animation.fadeOut
+          import androidx.compose.animation.togetherWith
+          import androidx.compose.foundation.background
+          import androidx.compose.foundation.border
           import androidx.compose.foundation.horizontalScroll
           import androidx.compose.foundation.layout.Arrangement
           import androidx.compose.foundation.layout.Column
@@ -353,6 +360,7 @@ jobs:
           import androidx.compose.foundation.layout.Spacer
           import androidx.compose.foundation.layout.fillMaxSize
           import androidx.compose.foundation.layout.fillMaxWidth
+          import androidx.compose.foundation.layout.heightIn
           import androidx.compose.foundation.layout.padding
           import androidx.compose.foundation.layout.width
           import androidx.compose.foundation.rememberScrollState
@@ -367,6 +375,8 @@ jobs:
           import androidx.compose.runtime.rememberCoroutineScope
           import androidx.compose.runtime.setValue
           import androidx.compose.ui.Alignment
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.foundation.shape.RoundedCornerShape
           import androidx.compose.ui.Modifier
           import androidx.compose.ui.text.input.ImeAction
           import androidx.compose.ui.text.style.TextOverflow
@@ -395,6 +405,7 @@ jobs:
               onOpenTarget: (Datum) -> Unit,
               onOpenCategory: (Datum) -> Unit,
               onMe: () -> Unit,
+              onSettings: () -> Unit,
           ) {
               val settingsRevision = container.settingsRevision
               val homePage = container.getInt("home_channel", 1).coerceIn(1, channels.lastIndex)
@@ -404,22 +415,54 @@ jobs:
                   if (pager.currentPage != homePage) pager.animateScrollToPage(homePage)
               }
               Column(Modifier.fillMaxSize()) {
+                  // Persistent home shortcuts: keep both destinations visible on the first screen.
+                  // A translucent tonal surface gives a layered/glass-like appearance without GPU blur.
                   Row(
-                      Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                      Modifier.fillMaxWidth()
+                          .padding(horizontal = 8.dp, vertical = 5.dp)
+                          .background(
+                              MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.88f),
+                              RoundedCornerShape(28.dp),
+                          )
+                          .border(0.6.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f), RoundedCornerShape(28.dp))
+                          .padding(4.dp),
                       verticalAlignment = Alignment.CenterVertically,
-                  ) {
-                      FilledTonalButton(onClick = onMe, modifier = Modifier.weight(1f)) { Text("我的", maxLines = 1) }
-                      Spacer(Modifier.width(6.dp))
-                      Text(channels[pager.currentPage], style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f), maxLines = 1)
-                  }
-                  Row(
-                      Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
                       horizontalArrangement = Arrangement.spacedBy(4.dp),
                   ) {
+                      FilledTonalButton(
+                          onClick = onMe,
+                          modifier = Modifier.weight(1f).animateContentSize().heightIn(min = 38.dp),
+                      ) { Text("我的", maxLines = 1) }
+                      AnimatedContent(
+                          targetState = pager.currentPage,
+                          modifier = Modifier.weight(0.82f),
+                          transitionSpec = { fadeIn() togetherWith fadeOut() },
+                          label = "current-channel-title",
+                      ) { page ->
+                          Text(
+                              text = channels[page],
+                              style = MaterialTheme.typography.titleSmall,
+                              textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                              maxLines = 1,
+                          )
+                      }
+                      FilledTonalButton(
+                          onClick = onSettings,
+                          modifier = Modifier.weight(1f).animateContentSize().heightIn(min = 38.dp),
+                      ) { Text("设置", maxLines = 1) }
+                  }
+                  Row(
+                      Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 2.dp),
+                      horizontalArrangement = Arrangement.spacedBy(5.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                  ) {
                       channels.forEachIndexed { index, title ->
-                          FilledTonalButton(onClick = { scope.launch { pager.animateScrollToPage(index) } }) {
-                              Text(title, maxLines = 1)
-                          }
+                          ChoiceButton(
+                              text = title,
+                              selected = pager.currentPage == index,
+                              onClick = { scope.launch { pager.animateScrollToPage(index) } },
+                              modifier = Modifier.animateContentSize(),
+                          )
                       }
                   }
                   HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
@@ -527,6 +570,16 @@ jobs:
                       item { ListHeader { Text("搜索") } }
                       item {
                           WatchTextField(value = text, onValueChange = { text = it }, hint = "动态、数码、话题、用户", imeAction = ImeAction.Search, onImeAction = submit)
+                      }
+                      if (text.isNotBlank()) {
+                          item {
+                              Text(
+                                  "当前输入：$text",
+                                  style = MaterialTheme.typography.labelSmall,
+                                  color = MaterialTheme.colorScheme.primary,
+                                  maxLines = 2,
+                              )
+                          }
                       }
                       item { FilledTonalButton(onClick = submit, enabled = text.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("搜索") } }
                       if (keyword == null && container.history.isNotEmpty()) {
@@ -780,17 +833,18 @@ jobs:
                   }
               }
           }
-          
           WEAR_EOF
           cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/Components.kt <<'WEAR_EOF'
           package com.zailinn.c001apk.wear
           
+          import androidx.compose.animation.animateColorAsState
           import androidx.compose.animation.core.RepeatMode
           import androidx.compose.animation.core.animateFloat
           import androidx.compose.animation.core.infiniteRepeatable
           import androidx.compose.animation.core.rememberInfiniteTransition
           import androidx.compose.animation.core.tween
           import androidx.compose.foundation.background
+          import androidx.compose.foundation.border
           import androidx.compose.foundation.clickable
           import androidx.compose.foundation.horizontalScroll
           import androidx.compose.foundation.rememberScrollState
@@ -800,6 +854,8 @@ jobs:
           import androidx.compose.foundation.layout.Row
           import androidx.compose.foundation.layout.Spacer
           import androidx.compose.foundation.layout.fillMaxWidth
+          import androidx.compose.foundation.layout.defaultMinSize
+          import androidx.compose.foundation.layout.heightIn
           import androidx.compose.foundation.layout.height
           import androidx.compose.foundation.layout.padding
           import androidx.compose.foundation.layout.size
@@ -813,6 +869,8 @@ jobs:
           import androidx.compose.runtime.LaunchedEffect
           import androidx.compose.runtime.getValue
           import androidx.compose.runtime.remember
+          import androidx.compose.runtime.mutableStateOf
+          import androidx.compose.runtime.setValue
           import androidx.compose.runtime.rememberCoroutineScope
           import androidx.compose.ui.Alignment
           import androidx.compose.ui.Modifier
@@ -821,8 +879,13 @@ jobs:
           import androidx.compose.ui.graphics.SolidColor
           import androidx.compose.ui.graphics.graphicsLayer
           import androidx.compose.ui.graphics.painter.ColorPainter
+          import androidx.compose.ui.focus.onFocusChanged
           import androidx.compose.ui.layout.ContentScale
           import androidx.compose.ui.text.input.ImeAction
+          import androidx.compose.ui.text.input.KeyboardCapitalization
+          import androidx.compose.ui.text.input.KeyboardType
+          import androidx.compose.ui.text.input.TextFieldValue
+          import androidx.compose.ui.text.TextRange
           import androidx.compose.ui.text.style.TextAlign
           import androidx.compose.ui.text.style.TextOverflow
           import androidx.compose.ui.unit.Dp
@@ -1095,7 +1158,94 @@ jobs:
               }
           }
           
-          /** A rounded text box that opens the watch keyboard when tapped. */
+          /**
+           * IME-safe text input for Wear OS.
+           * Keep TextFieldValue internally so composing ranges from Chinese IMEs are not
+           * discarded when the parent stores a plain String. The visible field mirrors
+           * the composing text and uses an explicit, high-contrast decoration surface.
+           */
+          @Composable
+          fun WatchTextField(
+              value: String,
+              onValueChange: (String) -> Unit,
+              hint: String,
+              modifier: Modifier = Modifier,
+              singleLine: Boolean = true,
+              imeAction: ImeAction = ImeAction.Default,
+              onImeAction: () -> Unit = {},
+          ) {
+              var focused by remember { mutableStateOf(false) }
+              var fieldValue by remember { mutableStateOf(TextFieldValue(text = value)) }
+          
+              // Synchronize only external edits. Do not replace an active composing range
+              // when the same text is echoed back by the parent composable.
+              LaunchedEffect(value) {
+                  if (value != fieldValue.text) {
+                      fieldValue = TextFieldValue(value, selection = TextRange(value.length))
+                  }
+              }
+          
+              val outlineColor by animateColorAsState(
+                  targetValue = if (focused) Brand else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
+                  label = "text-field-outline",
+              )
+              val shape = RoundedCornerShape(22.dp)
+          
+              BasicTextField(
+                  value = fieldValue,
+                  onValueChange = { next ->
+                      fieldValue = next
+                      onValueChange(next.text)
+                  },
+                  singleLine = singleLine,
+                  textStyle = MaterialTheme.typography.bodyMedium.copy(
+                      color = MaterialTheme.colorScheme.onSurface,
+                      textAlign = TextAlign.Start,
+                  ),
+                  cursorBrush = SolidColor(Brand),
+                  keyboardOptions = KeyboardOptions(
+                      capitalization = KeyboardCapitalization.None,
+                      keyboardType = KeyboardType.Text,
+                      imeAction = imeAction,
+                  ),
+                  keyboardActions = KeyboardActions(
+                      onSearch = { onImeAction() },
+                      onDone = { onImeAction() },
+                      onGo = { onImeAction() },
+                      onSend = { onImeAction() },
+                  ),
+                  modifier = modifier
+                      .fillMaxWidth()
+                      .heightIn(min = 50.dp)
+                      .onFocusChanged { focused = it.isFocused }
+                      .clip(shape)
+                      .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.94f), shape)
+                      .border(1.dp, outlineColor, shape)
+                      .padding(horizontal = 16.dp, vertical = 13.dp),
+                  decorationBox = { innerTextField ->
+                      Row(
+                          modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 24.dp),
+                          verticalAlignment = Alignment.CenterVertically,
+                      ) {
+                          androidx.compose.foundation.layout.Box(
+                              modifier = Modifier.weight(1f),
+                              contentAlignment = Alignment.CenterStart,
+                          ) {
+                              if (fieldValue.text.isEmpty()) {
+                                  Text(
+                                      text = hint,
+                                      style = MaterialTheme.typography.bodyMedium,
+                                      color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                      maxLines = if (singleLine) 1 else 4,
+                                  )
+                              }
+                              innerTextField()
+                          }
+                      }
+                  },
+              )
+          }
+          
           @Composable
           fun WatchTextField(
               value: String,
@@ -1800,7 +1950,7 @@ jobs:
                       item { ListHeader { Text("关于") } }
                       item {
                           Text(
-                              "酷安 Wear OS 版 0.6.0",
+                              "酷安 Wear OS 版 0.6.1",
                               style = MaterialTheme.typography.titleSmall,
                               textAlign = TextAlign.Center,
                           )
@@ -2352,6 +2502,7 @@ jobs:
                                       onOpenTarget = ::openTarget,
                                       onOpenCategory = ::openCategory,
                                       onMe = { navController.navigate("me") },
+                                      onSettings = { navController.navigate("settings") },
                                   )
                               }
                               composable("search") {
@@ -2784,7 +2935,7 @@ jobs:
           import kotlinx.coroutines.launch
           import java.net.URLDecoder
           
-          const val WEAR_VERSION_NAME = "0.6.0"
+          const val WEAR_VERSION_NAME = "0.6.1"
           
           /**
            * Open the original Coolapk post on the paired phone first. This is useful when
@@ -3303,13 +3454,13 @@ jobs:
         run: |
           set -euo pipefail
           grep -q '":wear"' settings.gradle.kts
-          grep -q 'versionCode = 2026103104' wear/build.gradle.kts
-          grep -q 'versionName = \"0.6.0\"' wear/build.gradle.kts
+          grep -q 'versionCode = 2026103105' wear/build.gradle.kts
+          grep -q 'versionName = \"0.6.1\"' wear/build.gradle.kts
           test -f wear/src/main/AndroidManifest.xml
           test -f wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
           test -f wear/src/main/kotlin/com/zailinn/c001apk/wear/ImageSaver.kt
 
-      - name: Check Wear 0.6.0 features and original API compatibility
+      - name: Check Wear 0.6.1 UI, IME and original API compatibility
         shell: bash
         run: |
           set -euo pipefail
@@ -3322,8 +3473,8 @@ jobs:
           for f in AccountScreens.kt ChannelScreens.kt Components.kt DetailScreens.kt HomeScreens.kt ImageSaver.kt MainActivity.kt MoreScreens.kt PagedFeed.kt TargetScreen.kt Text.kt WearApp.kt WearApplication.kt WearContainer.kt; do
             test -s "$W/$f" || { echo "Missing Wear source: $f"; exit 1; }
           done
-          grep -q 'versionCode = 2026103104' wear/build.gradle.kts
-          grep -q 'versionName = "0.6.0"' wear/build.gradle.kts
+          grep -q 'versionCode = 2026103105' wear/build.gradle.kts
+          grep -q 'versionName = "0.6.1"' wear/build.gradle.kts
           grep -q 'wear-remote-interactions:1.2.0' wear/build.gradle.kts
           grep -q 'android.permission.VIBRATE' wear/src/main/AndroidManifest.xml
           grep -q 'RemoteActivityHelper' "$W/MoreScreens.kt"
@@ -3345,6 +3496,14 @@ jobs:
           grep -q 'fun MeScreen' "$W/MoreScreens.kt"
           grep -q 'fun SettingsScreen' "$W/MoreScreens.kt"
           grep -q 'fun SettingsDetailScreen' "$W/MoreScreens.kt"
+          grep -q 'onSettings = { navController.navigate("settings") }' "$W/WearApp.kt"
+          grep -q 'onSettings: () -> Unit' "$W/ChannelScreens.kt"
+          grep -q 'TextFieldValue' "$W/Components.kt"
+          grep -q 'KeyboardType.Text' "$W/Components.kt"
+          grep -q 'innerTextField()' "$W/Components.kt"
+          grep -q '当前输入：$text' "$W/ChannelScreens.kt"
+          grep -q 'AnimatedContent' "$W/ChannelScreens.kt"
+          grep -q 'surfaceContainer.copy(alpha = 0.88f)' "$W/ChannelScreens.kt"
           grep -q 'fun MineListScreen' "$W/MoreScreens.kt"
           for text in '导出 Cookie' '我的备份' '本地收藏' '浏览历史' '我的常去' '我的收藏' '我的赞' '我的回复' '@我的动态' '@我的评论' '我收到的赞' '收到的回复'; do
             grep -Fq "$text" "$W/MoreScreens.kt" || { echo "Missing Mine/settings feature: $text"; exit 1; }
@@ -3365,27 +3524,27 @@ jobs:
           if grep -RIn 'android.webkit.WebView' "$W"; then
             echo 'Wear module must not depend on WebView.'; exit 1
           fi
-          echo 'Wear 0.6.0 feature and original API checks passed.'
+          echo 'Wear 0.6.1 UI, IME and original API checks passed.'
 
-      - name: Build Wear OS 0.6.0 release APK
+      - name: Build Wear OS 0.6.1 release APK
         run: |
           chmod +x ./gradlew
           ./gradlew :wear:assembleRelease --no-daemon --stacktrace
 
-      - name: Verify APK 0.6.0 output
+      - name: Verify APK 0.6.1 output
         run: |
           set -euo pipefail
           ls -lh wear/build/outputs/apk/release/
           test -s wear/build/outputs/apk/release/wear-release.apk
           mkdir -p dist
-          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.0-Account-Settings-Comments-GalaxyWatch7.apk
-          sha256sum dist/Coolapk-WearOS-v0.6.0-Account-Settings-Comments-GalaxyWatch7.apk > dist/SHA256SUMS.txt
-          printf 'versionName=0.6.0\nversionCode=2026103104\ncompileSdk=37.0\nbuildTools=37.0.0\n' > dist/BUILD_INFO.txt
+          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.1-UI-IME-Fix-GalaxyWatch7.apk
+          sha256sum dist/Coolapk-WearOS-v0.6.1-UI-IME-Fix-GalaxyWatch7.apk > dist/SHA256SUMS.txt
+          printf 'versionName=0.6.1\nversionCode=2026103105\ncompileSdk=37.0\nbuildTools=37.0.0\n' > dist/BUILD_INFO.txt
           printf 'source=%s\ncommit=%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> dist/BUILD_INFO.txt
 
       - name: Upload Wear APK
         uses: actions/upload-artifact@v7
         with:
-          name: Coolapk-WearOS-v0.6.0-Account-Settings-Comments-GalaxyWatch7
+          name: Coolapk-WearOS-v0.6.1-UI-IME-Fix-GalaxyWatch7
           path: dist/
           if-no-files-found: error
