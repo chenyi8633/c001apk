@@ -2,8 +2,8 @@
 # 使用：将本文件放到 .github/workflows/wear-apk.yml 并提交到 main。
 # 从你 Fork 仓库当前提交构建，保留 :core 网络层；手表端单独适配圆屏 UI。
 
-name: Build Coolapk Wear OS v0.6.13 - All Channels and Gaussian Glass - ARMv7 - Galaxy Watch7
-run-name: Wear OS 0.6.13 全频道返回状态保留、高斯模糊材质、手表性能优化、Wear OS 6/7、32 位 ARMv7
+name: Build Coolapk Wear OS v0.6.14 - Opaque Frosted UI and 12h Clock - ARMv7 - Galaxy Watch7
+run-name: Wear OS 0.6.14 不透明高斯磨砂、半圆时钟、底部分页圆点、账号资料、手表性能优化、32 位 ARMv7
 
 on:
   push:
@@ -7304,7 +7304,374 @@ jobs:
           print('Wear OS 0.6.13 version pair and navigation layout checks passed.')
           PYFIX
 
-      - name: Verify Wear OS 0.6.13 all-channel state, Gaussian glass, network recovery and ARMv7 ABI
+      - name: Apply Wear OS 0.6.14 opaque frosted UI, 12-hour arc clock and page indicators
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/patch_wear_0614_ui.py <<'PATCH_0614_UI'
+          from pathlib import Path
+          import re
+          
+          PKG = Path('wear/src/main/kotlin/com/zailinn/c001apk/wear')
+          
+          # 1) Upgrade the channel hub: compact 12-hour arc clock, bottom page dots,
+          #    opaque neutral frosted rail, and no app-name/title banner.
+          p = PKG / 'ChannelScreens.kt'
+          s = p.read_text()
+          imports = [
+              'import androidx.compose.foundation.Canvas\n',
+              'import androidx.compose.foundation.clickable\n',
+              'import androidx.compose.foundation.layout.height\n',
+              'import androidx.compose.foundation.layout.size\n',
+              'import androidx.compose.foundation.shape.CircleShape\n',
+              'import java.time.LocalTime\n',
+              'import java.time.format.DateTimeFormatter\n',
+              'import java.util.Locale\n',
+          ]
+          for imp in imports:
+              if imp not in s:
+                  # Place with package imports, before first non-import declaration.
+                  marker = 'import androidx.compose.animation.AnimatedContent\n'
+                  if marker in s:
+                      s = s.replace(marker, marker + imp, 1)
+                  else:
+                      raise RuntimeError(f'Cannot insert ChannelScreens import: {imp.strip()}')
+          
+          start = s.index('@Composable\nfun ChannelHubScreen(')
+          end = s.index('\n@Composable\nprivate fun FeedChannel(', start)
+          new_hub = r'''private val wearClockFormatter = DateTimeFormatter.ofPattern("h:mm a", Locale.US)
+          
+          @Composable
+          fun WearMiniClock() {
+              var timeText by remember { mutableStateOf(LocalTime.now().format(wearClockFormatter)) }
+              LaunchedEffect(Unit) {
+                  while (true) {
+                      val now = LocalTime.now()
+                      timeText = now.format(wearClockFormatter)
+                      delay(((60 - now.second) * 1_000L).coerceAtLeast(1_000L))
+                  }
+              }
+              val arcBaseColor = MaterialTheme.colorScheme.outlineVariant
+              val arcAccentColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+              Row(
+                  modifier = Modifier.fillMaxWidth().height(19.dp).padding(horizontal = 12.dp),
+                  horizontalArrangement = Arrangement.End,
+                  verticalAlignment = Alignment.CenterVertically,
+              ) {
+                  Text(timeText, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                  Spacer(Modifier.width(4.dp))
+                  Canvas(Modifier.width(18.dp).height(9.dp)) {
+                      val strokeWidth = 1.8.dp.toPx()
+                      val arcSize = androidx.compose.ui.geometry.Size(size.width - strokeWidth, size.height * 2f)
+                      val arcTopLeft = androidx.compose.ui.geometry.Offset(strokeWidth / 2f, 0f)
+                      val stroke = androidx.compose.ui.graphics.drawscope.Stroke(
+                          width = strokeWidth,
+                          cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                      )
+                      drawArc(
+                          color = arcBaseColor,
+                          startAngle = 180f,
+                          sweepAngle = -180f,
+                          useCenter = false,
+                          topLeft = arcTopLeft,
+                          size = arcSize,
+                          style = stroke,
+                      )
+                      drawArc(
+                          color = arcAccentColor,
+                          startAngle = 180f,
+                          sweepAngle = -92f,
+                          useCenter = false,
+                          topLeft = arcTopLeft,
+                          size = arcSize,
+                          style = stroke,
+                      )
+                  }
+              }
+          }
+          
+          @Composable
+          fun ChannelHubScreen(
+              container: WearContainer,
+              onOpenFeed: (Datum) -> Unit,
+              onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+              onOpenCategory: (Datum) -> Unit,
+              onLogin: () -> Unit,
+              onProfile: (String) -> Unit,
+              onAbout: () -> Unit,
+              onOpenMineList: (String, String?) -> Unit,
+              onOpenNotification: (String) -> Unit,
+              onOpenSettingsSection: (String) -> Unit,
+              pagerState: PagerState,
+              railState: ScrollState,
+              listStates: List<ScalingLazyListState>,
+              retainedFeeds: MutableMap<String, PagedFeed>,
+              hubSession: ChannelHubSession,
+          ) {
+              // Keep only the time chip, channel rail and content. No oversized app-name header.
+              val navItems = listOf("推荐", "热门", "话题", "数码", "酷图", "搜索", "我的", "设置")
+              val pager = pagerState
+              val scope = rememberCoroutineScope()
+          
+              Column(Modifier.fillMaxSize()) {
+                  val glassShape = RoundedCornerShape(24.dp)
+                  androidx.compose.foundation.layout.Box(
+                      modifier = Modifier.fillMaxWidth()
+                          .padding(horizontal = 7.dp, vertical = 2.dp)
+                          .clip(glassShape)
+                          .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                  ) {
+                      // Neutral, opaque frosted surface. A single restrained Gaussian wash avoids
+                      // the old centered green glow and keeps the rail from looking transparent.
+                      androidx.compose.foundation.layout.Box(Modifier.matchParentSize()) {
+                          androidx.compose.foundation.layout.Box(
+                              modifier = Modifier.align(Alignment.CenterStart)
+                                  .size(76.dp, 40.dp)
+                                  .background(
+                                      Brush.radialGradient(
+                                          listOf(
+                                              Color.White.copy(alpha = 0.36f),
+                                              Color.White.copy(alpha = 0.16f),
+                                              Color.Transparent,
+                                          ),
+                                      ),
+                                      CircleShape,
+                                  )
+                                  .blur(18.dp),
+                          )
+                      }
+                      Row(
+                          modifier = Modifier.fillMaxWidth()
+                              .background(
+                                  Brush.verticalGradient(
+                                      listOf(
+                                          MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.88f),
+                                          MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.88f),
+                                          MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.90f),
+                                      ),
+                                  ),
+                              )
+                              .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f), glassShape)
+                              .horizontalScroll(railState)
+                              .padding(horizontal = 7.dp, vertical = 4.dp),
+                          horizontalArrangement = Arrangement.spacedBy(5.dp),
+                          verticalAlignment = Alignment.CenterVertically,
+                      ) {
+                          navItems.forEachIndexed { index, title ->
+                              ChoiceButton(
+                                  text = title,
+                                  selected = pager.currentPage == index,
+                                  onClick = { scope.launch { pager.animateScrollToPage(index) } },
+                                  modifier = Modifier.heightIn(min = 36.dp),
+                              )
+                          }
+                      }
+                  }
+          
+                  androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().weight(1f)) {
+                      HorizontalPager(
+                          pager,
+                          Modifier.fillMaxSize().padding(bottom = 17.dp),
+                          beyondViewportPageCount = 0,
+                      ) { page ->
+                          when (page) {
+                              0 -> FeedChannel(container, "推荐", null, null, onOpenFeed, onOpenUser, onOpenTarget, listStates[0], retainedFeeds)
+                              1 -> FeedChannel(container, "热门", "/page?url=V9_HOME_TAB_RANKING", "热榜", onOpenFeed, onOpenUser, onOpenTarget, listStates[1], retainedFeeds)
+                              2 -> CategoryIndexChannel(container, topic = true, onOpenCategory = onOpenCategory, listState = listStates[2], session = hubSession)
+                              3 -> CategoryIndexChannel(container, topic = false, onOpenCategory = onOpenCategory, listState = listStates[3], session = hubSession)
+                              4 -> FeedChannel(container, "酷图", "/page?url=V11_FIND_COOLPIC", "酷图", onOpenFeed, onOpenUser, onOpenTarget, listStates[4], retainedFeeds)
+                              5 -> SearchChannel(container, onOpenFeed, onOpenUser, onOpenTarget, listStates[5], hubSession.search)
+                              6 -> MeScreen(
+                                  container = container,
+                                  onLogin = onLogin,
+                                  onProfile = onProfile,
+                                  onAbout = onAbout,
+                                  onSettings = { scope.launch { pager.animateScrollToPage(7) } },
+                                  onOpenList = onOpenMineList,
+                                  onOpenNotification = onOpenNotification,
+                                  listState = listStates[6],
+                                  session = hubSession.me,
+                              )
+                              else -> SettingsScreen(
+                                  container = container,
+                                  onLogin = onLogin,
+                                  onOpenSection = onOpenSettingsSection,
+                                  onAbout = onAbout,
+                                  listState = listStates[7],
+                              )
+                          }
+                      }
+                      Row(
+                          modifier = Modifier.align(Alignment.BottomCenter).height(17.dp),
+                          horizontalArrangement = Arrangement.spacedBy(3.dp),
+                          verticalAlignment = Alignment.CenterVertically,
+                      ) {
+                          navItems.indices.forEach { index ->
+                              val selected = pager.currentPage == index
+                              androidx.compose.foundation.layout.Box(
+                                  modifier = Modifier.size(14.dp).clickable {
+                                      scope.launch { pager.animateScrollToPage(index) }
+                                  },
+                                  contentAlignment = Alignment.Center,
+                              ) {
+                                  androidx.compose.foundation.layout.Box(
+                                      modifier = Modifier.size(if (selected) 11.dp else 4.dp)
+                                          .clip(CircleShape)
+                                          .then(
+                                              if (selected) Modifier.border(
+                                                  1.2.dp,
+                                                  MaterialTheme.colorScheme.onSurface.copy(alpha = 0.86f),
+                                                  CircleShape,
+                                              ) else Modifier,
+                                          ),
+                                      contentAlignment = Alignment.Center,
+                                  ) {
+                                      if (selected) {
+                                          androidx.compose.foundation.layout.Box(
+                                              Modifier.size(3.dp).clip(CircleShape)
+                                                  .background(MaterialTheme.colorScheme.primary),
+                                          )
+                                      } else {
+                                          androidx.compose.foundation.layout.Box(
+                                              Modifier.size(4.dp).clip(CircleShape)
+                                                  .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.62f)),
+                                          )
+                                      }
+                                  }
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+          '''
+          s = s[:start] + new_hub + s[end:]
+          p.write_text(s)
+          
+          # 2) Replace see-through / green-glow card treatment with a nearly opaque neutral frosted surface.
+          p = PKG / 'Components.kt'
+          s = p.read_text()
+          start_marker = '/** Gaussian-frosted material. Blur is isolated to the background layer, not text/images. */'
+          end_marker = '/** A feed in a list: who, what, a picture, and the counts. */'
+          start = s.index(start_marker)
+          end = s.index(end_marker, start)
+          new_glass = r'''/** Opaque Gaussian-frosted material with a neutral haze; content stays crisp and readable. */
+          @Composable
+          fun GlassCard(
+              onClick: () -> Unit,
+              modifier: Modifier = Modifier,
+              content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+          ) {
+              val shape = RoundedCornerShape(17.dp)
+              val base = MaterialTheme.colorScheme.surfaceContainerHigh
+              Box(modifier = modifier.clip(shape).background(base)) {
+                  // The surface itself is fully opaque; the softened highlight is a material texture,
+                  // not a transparent window or a green radial spotlight.
+                  Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(
+                      base.copy(alpha = 0.86f),
+                      MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.86f),
+                      MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.88f),
+                  ))))
+                  Box(Modifier.matchParentSize()) {
+                      Box(
+                          Modifier.align(Alignment.TopEnd).size(88.dp)
+                              .background(Brush.radialGradient(listOf(
+                                  Color.White.copy(alpha = 0.38f),
+                                  Color.White.copy(alpha = 0.16f),
+                                  Color.Transparent,
+                              )), CircleShape)
+                              .blur(20.dp),
+                      )
+                  }
+                  Column(Modifier.fillMaxWidth()
+                      .border(1.dp, Color.White.copy(alpha = 0.20f), shape)
+                      .border(0.7.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.38f), shape)
+                      .clickable(onClick = onClick)
+                      .padding(10.dp), content = content)
+              }
+          }
+          
+          '''
+          s = s[:start] + new_glass + s[end:]
+          p.write_text(s)
+          
+          # 3) Confirm that the logged-in My page already has a real profile fetch, avatar, level, experience and progress.
+          more = (PKG / 'MoreScreens.kt').read_text()
+          required_me = (
+              'class MeScreenSession',
+              'container.repository.profile(uid)',
+              'Avatar(profile?.userAvatar, 40.dp)',
+              'profile?.text("level")',
+              'profile?.text("experience")',
+              'profile?.int("experience")',
+              'profile?.int("next_level_experience")',
+          )
+          missing = [x for x in required_me if x not in more]
+          if missing:
+              raise RuntimeError(f'Me page profile features missing: {missing}')
+          
+          # 4) Make the About page truthful about the new in-watch verification engine.
+          home = PKG / 'HomeScreens.kt'
+          hs = home.read_text()
+          hs = hs.replace('"酷安 Wear OS 版 0.6.1"', '"酷安 Wear OS 版 0.6.14"', 1)
+          old_about = "与手机版共用同一套网络层。支持游客浏览、设置分类、账号主页、我的动态、关注、粉丝、收藏、历史、通知及 Cookie 导出、Cookie 登录、搜索、动态详情、评论、点赞、用户主页、机型/话题板块和看图。动态作者头像/名称可打开主页，动态关联的机型与话题标签可点入对应板块。\\n\\n手表上不能打开网页，所以账号密码登录、验证码和发帖暂不支持。"
+          new_about = "与手机版共用 Core 网络层。支持游客浏览、频道与板块、账号主页、我的动态、关注、粉丝、收藏、历史、通知、Cookie 登录、搜索、动态详情、评论、点赞、用户主页、机型/话题板块和看图。评论遇到人机验证时，可在手表应用内使用系统 WebView 或 GeckoView 完成验证，再由网络层自动重试。\\n\\n目前账号登录仍使用 Cookie 登录；网页密码登录和动态发布尚未开放，避免网页 Cookie 与客户端账号凭据不同步。"
+          if old_about not in hs:
+              raise RuntimeError('Expected old About description was not found')
+          hs = hs.replace(old_about, new_about, 1)
+          home.write_text(hs)
+          
+          # 4b) Use one shared Wear AppScaffold time slot; avoid duplicate clock/system TimeText.
+          wear_app = PKG / 'WearApp.kt'
+          wa = wear_app.read_text()
+          if wa.count('AppScaffold {') != 1:
+              raise RuntimeError('Expected one AppScaffold call before installing the shared 12-hour clock')
+          wa = wa.replace('AppScaffold {', 'AppScaffold(timeText = { WearMiniClock() }) {', 1)
+          wear_app.write_text(wa)
+          
+          # 5) Bump app/build version.
+          more = more.replace('const val WEAR_VERSION_NAME = "0.6.13"', 'const val WEAR_VERSION_NAME = "0.6.14"', 1)
+          more = more.replace('"酷安 Wear OS 版 0.6.13"', '"酷安 Wear OS 版 0.6.14"', 1)
+          (PKG / 'MoreScreens.kt').write_text(more)
+          
+          build_path = Path('wear/build.gradle.kts')
+          build = build_path.read_text()
+          if build.count('versionCode = 2026103118') != 1 or build.count('versionName = "0.6.13"') != 1:
+              raise RuntimeError('Expected exactly one Wear OS 0.6.13 version pair')
+          build = build.replace('versionCode = 2026103118', 'versionCode = 2026103119', 1)
+          build = build.replace('versionName = "0.6.13"', 'versionName = "0.6.14"', 1)
+          build_path.write_text(build)
+          
+          # 5) Source-level UI regression checks.
+          channel = (PKG / 'ChannelScreens.kt').read_text()
+          components = (PKG / 'Components.kt').read_text()
+          assert 'DateTimeFormatter.ofPattern("h:mm a", Locale.US)' in channel
+          assert 'Canvas(Modifier.width(18.dp).height(9.dp))' in channel
+          assert 'AppScaffold(timeText = { WearMiniClock() })' in (PKG / 'WearApp.kt').read_text()
+          assert 'WearMiniClock()' not in channel[channel.index('fun ChannelHubScreen('):channel.index('private fun FeedChannel(')]
+          assert 'sweepAngle = -180f' in channel
+          assert 'val arcBaseColor = MaterialTheme.colorScheme.outlineVariant' in channel
+          assert 'val arcAccentColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)' in channel
+          assert 'navItems.indices.forEach' in channel
+          assert 'Modifier.align(Alignment.BottomCenter)' in channel
+          assert 'HorizontalPager(' in channel and 'padding(bottom = 17.dp)' in channel
+          assert 'Brand.copy(alpha = 0.58f)' not in channel
+          assert 'Brand.copy(alpha = 0.34f)' not in components
+          assert 'base.copy(alpha = 0.36f)' not in components
+          assert '.blur(20.dp)' in components and '.blur(18.dp)' in channel
+          assert 'const val WEAR_VERSION_NAME = "0.6.14"' in more
+          assert 'versionCode = 2026103119' in build and 'versionName = "0.6.14"' in build
+          print('0.6.14 UI patch: opaque frosted materials, neutral blur, 12-hour arc clock and 8-page dot indicator passed.')
+          assert '酷安 Wear OS 版 0.6.14' in hs and '网页密码登录和动态发布尚未开放' in hs
+          print('My page account avatar, level, experience and progress bar are present and retained.')
+          print('About page now reflects in-watch CAPTCHA verification and accurately lists remaining limitations.')
+          print('Performance: clock updates at minute boundaries; only static, localized blur layers; pager keeps beyondViewportPageCount=0.')
+          PATCH_0614_UI
+          python3 -m py_compile /tmp/patch_wear_0614_ui.py
+          python3 /tmp/patch_wear_0614_ui.py
+
+      - name: Verify Wear OS 0.6.14 opaque frosted UI, clock, page indicators, all-channel state and ARMv7 ABI
         shell: bash
         run: |
           set -euo pipefail
@@ -7317,8 +7684,8 @@ jobs:
           test -s wear/build.gradle.kts
           grep -q '":wear"' settings.gradle.kts
           grep -q 'https://maven.mozilla.org/maven2/' settings.gradle.kts
-          grep -q 'versionCode = 2026103118' wear/build.gradle.kts
-          grep -q 'versionName = "0.6.13"' wear/build.gradle.kts
+          grep -q 'versionCode = 2026103119' wear/build.gradle.kts
+          grep -q 'versionName = "0.6.14"' wear/build.gradle.kts
           grep -q 'targetSdk = 37' wear/build.gradle.kts
           grep -q 'minorApiLevel = 2' wear/build.gradle.kts
           grep -q 'version = release(37)' wear/build.gradle.kts
@@ -7338,8 +7705,8 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           app = Path('wear/src/main/kotlin/com/zailinn/c001apk/wear/WearApp.kt').read_text()
-          assert app.index('val navController = rememberSwipeDismissableNavController()') < app.index('AppScaffold {')
-          assert app.index('val args = remember { NavArgs() }') < app.index('AppScaffold {')
+          assert app.index('val navController = rememberSwipeDismissableNavController()') < app.index('AppScaffold(timeText = { WearMiniClock() }) {')
+          assert app.index('val args = remember { NavArgs() }') < app.index('AppScaffold(timeText = { WearMiniClock() }) {')
           assert app.count('val navController = rememberSwipeDismissableNavController()') == 1
           print('Verified NavController and route payloads outlive the AppScaffold content slot.')
           PY
@@ -7362,7 +7729,7 @@ jobs:
           assert 'class MineListSession' in more and 'session.feed(feedKey)' in more
           assert 'class UserScreenSession' in detail and 'val feeds = container.newPagedFeed' in detail
           assert 'class TargetScreenSession' in target and 'private var posts: PagedFeed?' in target
-          assert '.blur(22.dp)' in channel and '.blur(24.dp)' in components
+          assert '.blur(18.dp)' in channel and '.blur(20.dp)' in components
           assert 'openSettingsList("LOCAL_FAVORITES", null)' in more
           assert 'openSettingsList("CLOUD_COLLECTIONS", null)' in more
           assert 'args.targetSessions.size > 16' in app
@@ -7437,9 +7804,9 @@ jobs:
           grep -q 'flush = true' "$W/WearApp.kt"
           grep -q 'fun GlassCard(' "$W/Components.kt"
           grep -q 'Brush.verticalGradient' "$W/Components.kt"
-          grep -q '\.blur(22.dp)' "$W/ChannelScreens.kt"
+          grep -q '\.blur(18.dp)' "$W/ChannelScreens.kt"
           grep -q 'Box(Modifier.matchParentSize())' "$W/ChannelScreens.kt"
-          grep -q '\.blur(24.dp)' "$W/Components.kt"
+          grep -q '\.blur(20.dp)' "$W/Components.kt"
           grep -q '^import androidx.compose.ui.draw.clip$' "$W/ChannelScreens.kt"
           grep -q 'beyondViewportPageCount = 0' "$W/ChannelScreens.kt"
           grep -q 'android.webkit.WebView' "$W/WearCaptchaBrowser.kt"
@@ -7449,7 +7816,7 @@ jobs:
           grep -q 'pending.acceptValidate(validate)' "$W/WearCaptchaBrowser.kt"
           grep -q 'fun acceptValidate(validate: String?)' "$W/WearCaptchaCoordinator.kt"
           grep -q 'c001apk-wear://captcha?cid=' "$W/WearCaptchaBrowser.kt"
-          grep -q 'WEAR_VERSION_NAME = "0.6.13"' "$W/MoreScreens.kt"
+          grep -q 'WEAR_VERSION_NAME = "0.6.14"' "$W/MoreScreens.kt"
           grep -q '内置浏览验证' "$W/MoreScreens.kt"
           grep -q 'feedReplies(id, listType, page, fromAuthor)' "$W/DetailScreens.kt"
           grep -q 'subRepliesVerified(origin.id.orEmpty(), page)' "$W/DetailScreens.kt"
@@ -7525,7 +7892,7 @@ jobs:
           assert 'val anchor = cards.getOrNull(centerIndex - 1)' in channel
           assert 'tappedIndex' not in channel
           assert channel.index('val cards = remember(feed.items, container.settingsRevision)') < channel.index('LaunchedEffect(state, durableFeedKey, cards, restoring)')
-          assert '.blur(22.dp)' in channel
+          assert '.blur(18.dp)' in channel
           components = (base / 'kotlin/com/zailinn/c001apk/wear/Components.kt').read_text()
           assert 'animateFloatAsState' in components and 'rail-pill-scale' in components
           assert 'android.permission.ACCESS_NETWORK_STATE' in (base / 'AndroidManifest.xml').read_text()
@@ -7551,8 +7918,31 @@ jobs:
           assert 'arm64-v8a' not in build
           print(f'Validated 8-entry single navigation rail, on-watch WebView/GeckoView proof callback, manifest and {len(kotlin)} Kotlin files; ABI filter is armeabi-v7a only.')
           PY
-          python3 -m py_compile /tmp/patch_wear_064.py /tmp/patch_wear_066.py /tmp/patch_wear_067_network.py /tmp/patch_wear_068_navigation.py /tmp/patch_wear_069_return.py /tmp/patch_wear_0612.py /tmp/patch_wear_0612_routes.py
-          echo 'Wear OS 0.6.13 all-channel session retention, Gaussian glass, bounded network recovery, Wear OS 6/7 and ARMv7-only checks passed.'
+          python3 -m py_compile /tmp/patch_wear_064.py /tmp/patch_wear_066.py /tmp/patch_wear_067_network.py /tmp/patch_wear_068_navigation.py /tmp/patch_wear_069_return.py /tmp/patch_wear_0612.py /tmp/patch_wear_0612_routes.py /tmp/patch_wear_0614_ui.py
+          python3 - <<'PYUI'
+          from pathlib import Path
+          root = Path('wear/src/main/kotlin/com/zailinn/c001apk/wear')
+          channel = (root / 'ChannelScreens.kt').read_text()
+          components = (root / 'Components.kt').read_text()
+          more = (root / 'MoreScreens.kt').read_text()
+          home = (root / 'HomeScreens.kt').read_text()
+          build = Path('wear/build.gradle.kts').read_text()
+          assert 'DateTimeFormatter.ofPattern("h:mm a", Locale.US)' in channel
+          assert 'sweepAngle = -180f' in channel and 'navItems.indices.forEach' in channel
+          assert 'Modifier.align(Alignment.BottomCenter)' in channel
+          assert 'padding(bottom = 17.dp)' in channel and 'beyondViewportPageCount = 0' in channel
+          assert 'Brand.copy(alpha = 0.58f)' not in channel
+          assert 'Brand.copy(alpha = 0.34f)' not in components
+          assert 'base.copy(alpha = 0.36f)' not in components
+          assert '.blur(20.dp)' in components and '.blur(18.dp)' in channel
+          assert 'Avatar(profile?.userAvatar, 40.dp)' in more
+          assert 'profile?.text("level")' in more and 'profile?.text("experience")' in more
+          assert '酷安 Wear OS 版 0.6.14' in home
+          assert '网页密码登录和动态发布尚未开放' in home
+          assert 'versionCode = 2026103119' in build and 'versionName = "0.6.14"' in build
+          print('Opaque frosted surfaces, neutral Gaussian haze, 12-hour half-arc clock, 8-page dots, My profile and About text checks passed.')
+          PYUI
+          echo 'Wear OS 0.6.14 all-channel sessions, opaque neutral frosted UI, 12-hour clock, page dots and ARMv7-only checks passed.'
           python3 - <<'PY'
           from pathlib import Path
           app = Path('wear/src/main/kotlin/com/zailinn/c001apk/wear/WearApp.kt').read_text()
@@ -7585,30 +7975,30 @@ jobs:
           print('Persistent navigation, partial-failure-safe page count, 40-page horizon and anchor restoration checks passed.')
           PY
 
-      - name: Kotlin compile preflight - Wear OS 0.6.13
+      - name: Kotlin compile preflight - Wear OS 0.6.14
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./gradlew
           ./gradlew :wear:compileReleaseKotlin --no-daemon --stacktrace --console=plain
 
-      - name: Build Wear OS 0.6.13 32-bit ARMv7 release APK
+      - name: Build Wear OS 0.6.14 32-bit ARMv7 release APK
         shell: bash
         run: |
           set -euo pipefail
           ./gradlew :wear:assembleRelease --no-daemon --stacktrace --console=plain
 
-      - name: Verify APK 0.6.13 output and native ABI
+      - name: Verify APK 0.6.14 output and native ABI
         run: |
           set -euo pipefail
           ls -lh wear/build/outputs/apk/release/
           test -s wear/build/outputs/apk/release/wear-release.apk
           mkdir -p dist
-          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.13-AllChannels-GaussianGlass-ARMv7-GalaxyWatch7.apk
-          sha256sum dist/Coolapk-WearOS-v0.6.13-AllChannels-GaussianGlass-ARMv7-GalaxyWatch7.apk > dist/SHA256SUMS.txt
+          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.14-OpaqueFrostedUI-12hClock-PageDots-ARMv7-GalaxyWatch7.apk
+          sha256sum dist/Coolapk-WearOS-v0.6.14-OpaqueFrostedUI-12hClock-PageDots-ARMv7-GalaxyWatch7.apk > dist/SHA256SUMS.txt
           python3 - <<'PY'
           import zipfile
-          apk = 'dist/Coolapk-WearOS-v0.6.13-AllChannels-GaussianGlass-ARMv7-GalaxyWatch7.apk'
+          apk = 'dist/Coolapk-WearOS-v0.6.14-OpaqueFrostedUI-12hClock-PageDots-ARMv7-GalaxyWatch7.apk'
           with zipfile.ZipFile(apk) as z:
               abis = sorted({n.split('/')[1] for n in z.namelist() if n.startswith('lib/') and len(n.split('/')) > 2})
           print('APK native ABI folders:', abis)
@@ -7620,12 +8010,12 @@ jobs:
               f.write('required=armeabi-v7a\n')
               f.write('64bit_or_x86=none\n')
           PY
-          printf 'versionName=0.6.13\nversionCode=2026103118\ntargetSdk=37\ncompileSdk=37.2 (minorApiLevel=2)\nbuildTools=37.0.0\nabi=armeabi-v7a-only\nwearOs=6-and-7\nminSdk=30\nnetworkRecovery=validated-route-callback+single-retry\nrequestTimeout=30s\nnavigationPersistence=root-owned-navcontroller+all-channel-session-cache+route-pagedfeeds+sync-checkpoint\nwebview=system-first\ngeckoview=159.0.20261022150525-armeabi-v7a\n' > dist/BUILD_INFO.txt
+          printf 'versionName=0.6.14\nversionCode=2026103119\ntargetSdk=37\ncompileSdk=37.2 (minorApiLevel=2)\nbuildTools=37.0.0\nabi=armeabi-v7a-only\nwearOs=6-and-7\nminSdk=30\nnetworkRecovery=validated-route-callback+single-retry\nrequestTimeout=30s\nnavigationPersistence=root-owned-navcontroller+all-channel-session-cache+route-pagedfeeds+sync-checkpoint\nui=opaque-neutral-frosted+12h-arc-clock+8-page-dots\nwebview=system-first\ngeckoview=159.0.20261022150525-armeabi-v7a\n' > dist/BUILD_INFO.txt
           printf 'source=%s\ncommit=%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> dist/BUILD_INFO.txt
 
       - name: Upload Wear APK
         uses: actions/upload-artifact@v7
         with:
-          name: Coolapk-WearOS-v0.6.13-AllChannels-GaussianGlass-ARMv7-GalaxyWatch7
+          name: Coolapk-WearOS-v0.6.14-OpaqueFrostedUI-12hClock-PageDots-ARMv7-GalaxyWatch7
           path: dist/
           if-no-files-found: error
