@@ -2,7 +2,7 @@
 # 使用：将本文件放到 .github/workflows/wear-apk.yml 并提交到 main。
 # 从你 Fork 仓库当前提交构建，保留 :core 网络层；手表端单独适配圆屏 UI。
 
-name: Build Coolapk Wear OS v0.6.8 - ARMv7 - Persistent Navigation - Galaxy Watch7
+name: Build Coolapk Wear OS v0.6.9 - Return-State Fix - ARMv7 - Galaxy Watch7
 run-name: Wear OS 0.6.8 持久返回位置、轻量毛玻璃、流畅动效、性能优化、Wear OS 6/7、32 位 ARMv7
 
 on:
@@ -5574,7 +5574,318 @@ jobs:
           PY
           python3 /tmp/patch_wear_068_navigation.py
 
-      - name: Verify Wear OS 0.6.8 durable navigation, network recovery, glass UI and ARMv7 ABI
+      - name: Apply Wear OS 0.6.9 actual return-event restoration fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/patch_wear_069_return.py <<'PY'
+          from pathlib import Path
+          
+          PKG = Path('wear/src/main/kotlin/com/zailinn/c001apk/wear')
+          
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f'{label}: expected exactly one match, found {count}')
+              return text.replace(old, new, 1)
+          
+          # 1) A dedicated observable event tells the retained Home destination to restore its
+          # viewport whenever a detail route is popped, even when Home was never recomposed.
+          p = PKG / 'WearContainer.kt'
+          s = p.read_text()
+          s = replace_once(
+              s,
+              '    var homeRefreshRevision by mutableIntStateOf(0)\n        private set\n',
+              '    var homeRefreshRevision by mutableIntStateOf(0)\n        private set\n    var homeReturnRevision by mutableIntStateOf(0)\n        private set\n',
+              'WearContainer home-return revision',
+          )
+          s = replace_once(
+              s,
+              '    fun requestHomeRefresh() { homeRefreshRevision++ }\n',
+              '    fun requestHomeRefresh() { homeRefreshRevision++ }\n    fun requestHomeRestore() { homeReturnRevision++ }\n',
+              'WearContainer home-return event',
+          )
+          s = replace_once(
+              s,
+              '''    fun saveNavigationInt(key: String, value: Int) {
+                  prefs.edit().putInt("nav_$key", value).apply()
+              }
+          ''',
+              '''    fun saveNavigationInt(key: String, value: Int, flush: Boolean = false) {
+                  val editor = prefs.edit().putInt("nav_$key", value)
+                  if (flush) editor.commit() else editor.apply()
+              }
+          ''',
+              'Synchronous navigation persistence option',
+          )
+          s = replace_once(
+              s,
+              '''    fun saveChannelScrollPosition(key: String, index: Int, offset: Int, anchorId: String? = null) {
+                  prefs.edit()
+                      .putInt("channel_${key}_index", index.coerceAtLeast(0))
+                      .putInt("channel_${key}_offset", offset.coerceIn(-4096, 4096))
+                      .putString("channel_${key}_anchor", anchorId)
+                      .apply()
+              }
+          
+              fun getChannelLoadedPages(key: String): Int = prefs.getInt("channel_${key}_pages", 0).coerceIn(0, 40)
+              fun saveChannelLoadedPages(key: String, pages: Int) {
+                  prefs.edit().putInt("channel_${key}_pages", pages.coerceIn(0, 40)).apply()
+              }
+          ''',
+              '''    fun saveChannelScrollPosition(
+                  key: String,
+                  index: Int,
+                  offset: Int,
+                  anchorId: String? = null,
+                  flush: Boolean = false,
+              ) {
+                  val editor = prefs.edit()
+                      .putInt("channel_${key}_index", index.coerceAtLeast(0))
+                      .putInt("channel_${key}_offset", offset.coerceIn(-4096, 4096))
+                      .putString("channel_${key}_anchor", anchorId)
+                  if (flush) editor.commit() else editor.apply()
+              }
+          
+              fun getChannelLoadedPages(key: String): Int = prefs.getInt("channel_${key}_pages", 0).coerceIn(0, 40)
+              fun saveChannelLoadedPages(key: String, pages: Int, flush: Boolean = false) {
+                  // Keep the largest successful page horizon; a partial restore must never shrink it.
+                  val highest = maxOf(prefs.getInt("channel_${key}_pages", 0), pages).coerceIn(0, 40)
+                  val editor = prefs.edit().putInt("channel_${key}_pages", highest)
+                  if (flush) editor.commit() else editor.apply()
+              }
+          ''',
+              'Flushable viewport and page-count persistence',
+          )
+          p.write_text(s)
+          
+          # 2) Detect the actual navigation transition from a child destination back to Home.
+          p = PKG / 'WearApp.kt'
+          s = p.read_text()
+          s = replace_once(
+              s,
+              '''                val currentEntry by navController.currentBackStackEntryAsState()
+                          LaunchedEffect(currentEntry?.destination?.route) {
+                              if (currentEntry?.destination?.route == "home" && container.getBool("refresh_on_return", false)) {
+                                  container.requestHomeRefresh()
+                              }
+                          }
+          ''',
+              '''                val currentEntry by navController.currentBackStackEntryAsState()
+                          val currentRoute = currentEntry?.destination?.route
+                          var previousRoute by remember { mutableStateOf<String?>(null) }
+                          LaunchedEffect(currentRoute) {
+                              if (currentRoute == "home" && previousRoute != null && previousRoute != "home") {
+                                  // Always re-read and restore the feed viewport on a real back-stack return.
+                                  // Refresh remains optional and is applied after the saved anchor is captured.
+                                  container.requestHomeRestore()
+                                  if (container.getBool("refresh_on_return", false)) container.requestHomeRefresh()
+                              }
+                              if (currentRoute != null) previousRoute = currentRoute
+                          }
+          ''',
+              'Explicit child-to-home return event',
+          )
+          s = replace_once(
+              s,
+              '                    .collect { page -> container.saveNavigationInt("last_channel_page", page) }',
+              '                    .collect { page -> container.saveNavigationInt("last_channel_page", page, flush = true) }',
+              'Durably save settled channel page',
+          )
+          # Force-flush the selected tab immediately before navigation so a very fast tab->post action
+          # cannot race the PagerState settled-page collector.
+          s = replace_once(
+              s,
+              '''                fun openFeed(feed: Datum) {
+                              val id = feed.id ?: feed.entityId ?: return
+                              args.feeds[id] = feed
+                              navController.navigate("feed/$id")
+                          }
+          ''',
+              '''                fun saveHomeNavigationState() {
+                              container.saveNavigationInt("last_channel_page", channelPagerState.settledPage, flush = true)
+                          }
+          
+                          fun openFeed(feed: Datum) {
+                              val id = feed.id ?: feed.entityId ?: return
+                              saveHomeNavigationState()
+                              args.feeds[id] = feed
+                              navController.navigate("feed/$id")
+                          }
+          ''',
+              'Persist selected tab before opening a post',
+          )
+          s = replace_once(
+              s,
+              '''                fun openTarget(item: Datum) {
+                              val target = targetFrom(item) ?: return
+                              val key = "target-${++args.targetIndex}"
+          ''',
+              '''                fun openTarget(item: Datum) {
+                              val target = targetFrom(item) ?: return
+                              saveHomeNavigationState()
+                              val key = "target-${++args.targetIndex}"
+          ''',
+              'Persist selected tab before opening target',
+          )
+          s = replace_once(
+              s,
+              '''                fun openCategory(item: Datum) {
+                              val key = "category-${++args.categoryIndex}"
+          ''',
+              '''                fun openCategory(item: Datum) {
+                              saveHomeNavigationState()
+                              val key = "category-${++args.categoryIndex}"
+          ''',
+              'Persist selected tab before opening category',
+          )
+          s = replace_once(
+              s,
+              '''                fun openMineList(type: String, id: String? = null) {
+                              navController.navigate("mine-list/$type/${id ?: "_"}")
+                          }
+          ''',
+              '''                fun openMineList(type: String, id: String? = null) {
+                              saveHomeNavigationState()
+                              navController.navigate("mine-list/$type/${id ?: "_"}")
+                          }
+          ''',
+              'Persist selected tab before opening account list',
+          )
+          # Top-level user and settings routes can also be opened from the Home rail.
+          s = s.replace(
+              'onOpenUser = { uid -> navController.navigate("user/$uid") },',
+              'onOpenUser = { uid -> saveHomeNavigationState(); navController.navigate("user/$uid") },',
+              1,
+          )
+          p.write_text(s)
+          
+          # 3) Crucial fix: restoration is keyed by the Home-return event and reads SharedPreferences
+          # inside the effect, never from a remember() snapshot captured when Home was first composed.
+          p = PKG / 'ChannelScreens.kt'
+          s = p.read_text()
+          s = replace_once(
+              s,
+              '''    val savedPages = remember(durableFeedKey) { container.getChannelLoadedPages(durableFeedKey) }
+              val savedPosition = remember(durableFeedKey) { container.getChannelScrollPosition(durableFeedKey) }
+              var restoring by remember(durableFeedKey) { mutableStateOf(true) }
+          ''',
+              '''    val homeReturnRevision = container.homeReturnRevision
+              var restoring by remember(durableFeedKey) { mutableStateOf(true) }
+          ''',
+              'Remove stale remembered viewport snapshot',
+          )
+          s = replace_once(
+              s,
+              '''    LaunchedEffect(feed, savedPages, refreshRevision) {
+                  restoring = true
+                  try {
+                      val shouldRefresh = refreshRevision > handledRefresh
+                      val positionToRestore = if (shouldRefresh) {
+                          container.getChannelScrollPosition(durableFeedKey)
+                      } else savedPosition
+                      val pagesToRestore = if (shouldRefresh) {
+                          maxOf(container.getChannelLoadedPages(durableFeedKey), feed.successfulPages)
+                      } else savedPages
+          ''',
+              '''    LaunchedEffect(feed, refreshRevision, homeReturnRevision, durableFeedKey) {
+                  restoring = true
+                  try {
+                      val shouldRefresh = refreshRevision > handledRefresh
+                      // Read the most recent committed values on every real return from a detail route.
+                      val positionToRestore = container.getChannelScrollPosition(durableFeedKey)
+                      val pagesToRestore = maxOf(
+                          container.getChannelLoadedPages(durableFeedKey),
+                          feed.successfulPages,
+                      )
+          ''',
+              'Restore on every back-stack return using fresh stored viewport',
+          )
+          # Save exact current viewport and pagination synchronously before every item action that leaves
+          # this feed page (post, author, or target), not only after the debounced scroll observer runs.
+          s = replace_once(
+              s,
+              '''    PrefetchNearEnd(feed, state, cards.size, enabled = !restoring)
+              ScreenScaffold(scrollState = state) { padding ->
+          ''',
+              '''    fun persistViewportBeforeOpen() {
+                  val centerIndex = state.centerItemIndex.coerceAtLeast(0)
+                  val anchor = cards.getOrNull(centerIndex - 1)?.let { it.entityId ?: it.id }
+                  container.saveChannelScrollPosition(
+                      durableFeedKey,
+                      centerIndex,
+                      state.centerItemScrollOffset,
+                      anchor,
+                      flush = true,
+                  )
+                  container.saveChannelLoadedPages(durableFeedKey, feed.successfulPages, flush = true)
+              }
+          
+              PrefetchNearEnd(feed, state, cards.size, enabled = !restoring)
+              ScreenScaffold(scrollState = state) { padding ->
+          ''',
+              'Synchronous viewport checkpoint helper',
+          )
+          s = replace_once(
+              s,
+              '''                FeedCard(it, onClick = {
+                              // Save the viewport center rather than the tapped row: this restores the
+                              // same visible list window when the detail page is dismissed later.
+                              val centerIndex = state.centerItemIndex.coerceAtLeast(0)
+                              val anchor = cards.getOrNull(centerIndex - 1)?.let { row -> row.entityId ?: row.id }
+                              container.saveChannelScrollPosition(
+                                  durableFeedKey,
+                                  centerIndex,
+                                  state.centerItemScrollOffset,
+                                  anchor,
+                              )
+                              onOpenFeed(it)
+                          }, onUser = onOpenUser, onTarget = onOpenTarget)
+          ''',
+              '''                FeedCard(
+                              it,
+                              onClick = { persistViewportBeforeOpen(); onOpenFeed(it) },
+                              onUser = { uid -> persistViewportBeforeOpen(); onOpenUser(uid) },
+                              onTarget = { target -> persistViewportBeforeOpen(); onOpenTarget(target) },
+                          )
+          ''',
+              'Checkpoint viewport before all feed-card navigation actions',
+          )
+          p.write_text(s)
+          
+          # 4) Update app-visible and package versions without changing feature set or dependencies.
+          p = PKG / 'MoreScreens.kt'
+          s = p.read_text()
+          s = s.replace('const val WEAR_VERSION_NAME = "0.6.8"', 'const val WEAR_VERSION_NAME = "0.6.9"')
+          s = s.replace('"酷安 Wear OS 版 0.6.8"', '"酷安 Wear OS 版 0.6.9"')
+          p.write_text(s)
+          
+          build = Path('wear/build.gradle.kts')
+          bs = build.read_text()
+          bs = replace_once(bs, 'versionCode = 2026103113', 'versionCode = 2026103114', 'Wear versionCode')
+          bs = replace_once(bs, 'versionName = "0.6.8"', 'versionName = "0.6.9"', 'Wear versionName')
+          build.write_text(bs)
+          
+          # 5) Regression guards: the delayed-return code path must be observable and must not use
+          # the stale remember(durableFeedKey) snapshot from 0.6.8.
+          app = (PKG / 'WearApp.kt').read_text()
+          channel = (PKG / 'ChannelScreens.kt').read_text()
+          container = (PKG / 'WearContainer.kt').read_text()
+          assert 'requestHomeRestore()' in app and 'homeReturnRevision' in container
+          assert 'LaunchedEffect(feed, refreshRevision, homeReturnRevision, durableFeedKey)' in channel
+          assert 'val positionToRestore = container.getChannelScrollPosition(durableFeedKey)' in channel
+          assert 'val savedPosition = remember(durableFeedKey)' not in channel
+          assert 'val savedPages = remember(durableFeedKey)' not in channel
+          assert 'flush = true' in channel and 'flush = true' in app
+          assert 'maxOf(prefs.getInt("channel_${key}_pages", 0), pages)' in container
+          assert 'previousRoute != "home"' in app
+          assert 'versionName = "0.6.9"' in bs and 'versionCode = 2026103114' in bs
+          print('0.6.9 return-event restore, fresh preference read, synchronous pre-navigation checkpoint and version checks passed')
+          PY
+          python3 -m py_compile /tmp/patch_wear_069_return.py
+          python3 /tmp/patch_wear_069_return.py
+
+      - name: Verify Wear OS 0.6.9 durable navigation, network recovery, glass UI and ARMv7 ABI
         shell: bash
         run: |
           set -euo pipefail
@@ -5586,8 +5897,8 @@ jobs:
           test -s wear/build.gradle.kts
           grep -q '":wear"' settings.gradle.kts
           grep -q 'https://maven.mozilla.org/maven2/' settings.gradle.kts
-          grep -q 'versionCode = 2026103113' wear/build.gradle.kts
-          grep -q 'versionName = "0.6.8"' wear/build.gradle.kts
+          grep -q 'versionCode = 2026103114' wear/build.gradle.kts
+          grep -q 'versionName = "0.6.9"' wear/build.gradle.kts
           grep -q 'targetSdk = 37' wear/build.gradle.kts
           grep -q 'minorApiLevel = 2' wear/build.gradle.kts
           grep -q 'version = release(37)' wear/build.gradle.kts
@@ -5647,6 +5958,14 @@ jobs:
           grep -q 'pagerState: PagerState' "$W/ChannelScreens.kt"
           grep -q 'MenuButton("← 返回设置"' "$W/MoreScreens.kt"
           grep -q 'onBack = { navController.popBackStack() }' "$W/WearApp.kt"
+          grep -q 'requestHomeRestore()' "$W/WearApp.kt"
+          grep -q 'homeReturnRevision' "$W/WearContainer.kt"
+          grep -q 'LaunchedEffect(feed, refreshRevision, homeReturnRevision, durableFeedKey)' "$W/ChannelScreens.kt"
+          grep -q 'val positionToRestore = container.getChannelScrollPosition(durableFeedKey)' "$W/ChannelScreens.kt"
+          if grep -q 'savedPosition = remember(durableFeedKey)' "$W/ChannelScreens.kt"; then echo 'Stale remembered viewport snapshot remains.' >&2; exit 1; fi
+          grep -q 'flush = true' "$W/ChannelScreens.kt"
+          grep -q 'maxOf(prefs.getInt("channel_${key}_pages", 0), pages)' "$W/WearContainer.kt"
+          grep -q 'flush = true' "$W/WearApp.kt"
           grep -q 'fun GlassCard(' "$W/Components.kt"
           grep -q 'Brush.verticalGradient' "$W/Components.kt"
           grep -q '\.blur(4.dp)' "$W/ChannelScreens.kt"
@@ -5761,7 +6080,7 @@ jobs:
           assert 'arm64-v8a' not in build
           print(f'Validated 8-entry single navigation rail, on-watch WebView/GeckoView proof callback, manifest and {len(kotlin)} Kotlin files; ABI filter is armeabi-v7a only.')
           PY
-          python3 -m py_compile /tmp/patch_wear_064.py /tmp/patch_wear_066.py /tmp/patch_wear_067_network.py /tmp/patch_wear_068_navigation.py
+          python3 -m py_compile /tmp/patch_wear_064.py /tmp/patch_wear_066.py /tmp/patch_wear_067_network.py /tmp/patch_wear_068_navigation.py /tmp/patch_wear_069_return.py
           echo 'Wear OS 0.6.8 persistent navigation, list restore, glass UI, bounded network recovery, Wear OS 6/7 and ARMv7-only checks passed.'
           python3 - <<'PY'
           from pathlib import Path
@@ -5795,30 +6114,30 @@ jobs:
           print('Persistent navigation, partial-failure-safe page count, 40-page horizon and anchor restoration checks passed.')
           PY
 
-      - name: Kotlin compile preflight - Wear OS 0.6.8
+      - name: Kotlin compile preflight - Wear OS 0.6.9
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./gradlew
           ./gradlew :wear:compileReleaseKotlin --no-daemon --stacktrace --console=plain
 
-      - name: Build Wear OS 0.6.8 32-bit ARMv7 release APK
+      - name: Build Wear OS 0.6.9 32-bit ARMv7 release APK
         shell: bash
         run: |
           set -euo pipefail
           ./gradlew :wear:assembleRelease --no-daemon --stacktrace --console=plain
 
-      - name: Verify APK 0.6.8 output and native ABI
+      - name: Verify APK 0.6.9 output and native ABI
         run: |
           set -euo pipefail
           ls -lh wear/build/outputs/apk/release/
           test -s wear/build/outputs/apk/release/wear-release.apk
           mkdir -p dist
-          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.8-32bit-PersistentNavigation-GalaxyWatch7.apk
-          sha256sum dist/Coolapk-WearOS-v0.6.8-32bit-PersistentNavigation-GalaxyWatch7.apk > dist/SHA256SUMS.txt
+          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.9-ReturnRestore-ARMv7-GalaxyWatch7.apk
+          sha256sum dist/Coolapk-WearOS-v0.6.9-ReturnRestore-ARMv7-GalaxyWatch7.apk > dist/SHA256SUMS.txt
           python3 - <<'PY'
           import zipfile
-          apk = 'dist/Coolapk-WearOS-v0.6.8-32bit-PersistentNavigation-GalaxyWatch7.apk'
+          apk = 'dist/Coolapk-WearOS-v0.6.9-ReturnRestore-ARMv7-GalaxyWatch7.apk'
           with zipfile.ZipFile(apk) as z:
               abis = sorted({n.split('/')[1] for n in z.namelist() if n.startswith('lib/') and len(n.split('/')) > 2})
           print('APK native ABI folders:', abis)
@@ -5830,12 +6149,12 @@ jobs:
               f.write('required=armeabi-v7a\n')
               f.write('64bit_or_x86=none\n')
           PY
-          printf 'versionName=0.6.8\nversionCode=2026103113\ntargetSdk=37\ncompileSdk=37.2 (minorApiLevel=2)\nbuildTools=37.0.0\nabi=armeabi-v7a-only\nwearOs=6-and-7\nminSdk=30\nnetworkRecovery=validated-route-callback+single-retry\nrequestTimeout=30s\nnavigationPersistence=selected-tab+scroll-index-offset+reload-pages\nwebview=system-first\ngeckoview=159.0.20261022150525-armeabi-v7a\n' > dist/BUILD_INFO.txt
+          printf 'versionName=0.6.9\nversionCode=2026103114\ntargetSdk=37\ncompileSdk=37.2 (minorApiLevel=2)\nbuildTools=37.0.0\nabi=armeabi-v7a-only\nwearOs=6-and-7\nminSdk=30\nnetworkRecovery=validated-route-callback+single-retry\nrequestTimeout=30s\nnavigationPersistence=home-return-event+fresh-prefs-read+sync-checkpoint+reload-pages\nwebview=system-first\ngeckoview=159.0.20261022150525-armeabi-v7a\n' > dist/BUILD_INFO.txt
           printf 'source=%s\ncommit=%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> dist/BUILD_INFO.txt
 
       - name: Upload Wear APK
         uses: actions/upload-artifact@v7
         with:
-          name: Coolapk-WearOS-v0.6.8-32bit-PersistentNavigation-GalaxyWatch7
+          name: Coolapk-WearOS-v0.6.9-ReturnRestore-ARMv7-GalaxyWatch7
           path: dist/
           if-no-files-found: error
