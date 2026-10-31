@@ -1,9 +1,9 @@
-# 酷安 Wear OS 0.6.3 / Galaxy Watch7 Modifier 导入修复版自动编译工作流
-# 使用：上传到 .github/workflows/wear-apk.yml 后提交到 main。
+# 酷安 Wear OS 0.6.4 / Galaxy Watch7 32-bit ARMv7 内嵌验证码版自动编译工作流
+# 使用：将本文件放到 .github/workflows/wear-apk.yml 并提交到 main。
 # 从你 Fork 仓库当前提交构建，保留 :core 网络层；手表端单独适配圆屏 UI。
 
-name: Build Coolapk Wear OS v0.6.3 - Modifier Import Fix - Galaxy Watch7
-run-name: Wear OS 0.6.3 修复 WearApp Modifier 导入并编译手表独立版
+name: Build Coolapk Wear OS v0.6.4 - ARMv7 - In-App CAPTCHA - Galaxy Watch7
+run-name: Wear OS 0.6.4 单排一级导航、内嵌验证码、32 位 ARMv7 独立版
 
 on:
   push:
@@ -3451,7 +3451,7 @@ jobs:
           </network-security-config>
           WEAR_EOF
 
-          # Apply clean 0.6.3 fixes after generating the module. This removes the old
+          # Apply clean 0.6.4 fixes after generating the module. This removes the old
           # duplicate input field, wires the Core captcha verifier to the watch browser,
           # registers the local FileProvider/deep link, and removes phone-only actions.
           cat > /tmp/patch_wear_062.py <<'PATCH_EOF'
@@ -4026,7 +4026,7 @@ jobs:
           if start >= 0 and end > start:
               s = s[:start] + s[end:]
           s = s.replace('openCoolapkPost(context, parentId)', 'openCoolapkPostOnWatch(context, parentId)')
-          s = s.replace('const val WEAR_VERSION_NAME = "0.6.1"', 'const val WEAR_VERSION_NAME = "0.6.3"')
+          s = s.replace('const val WEAR_VERSION_NAME = "0.6.1"', 'const val WEAR_VERSION_NAME = "0.6.4"')
           more.write_text(s)
           
           # 10) Version bump in build config and remove phone remote-interaction dependency.
@@ -4036,25 +4036,479 @@ jobs:
           # Find the wear module build file reliably.
           wbuild = root.parents[1] / 'build.gradle.kts'
           bs = wbuild.read_text()
-          bs = bs.replace('versionCode = 2026103105', 'versionCode = 2026103107').replace('versionName = "0.6.1"', 'versionName = "0.6.3"')
+          bs = bs.replace('versionCode = 2026103105', 'versionCode = 2026103107').replace('versionName = "0.6.1"', 'versionName = "0.6.4"')
           bs = re.sub(r'^\s*implementation\("androidx\.wear:wear-remote-interactions:1\.2\.0"\)\s*\n', '', bs, flags=re.M)
           wbuild.write_text(bs)
           
-          print('0.6.3 post-generation patches applied')
+          print('0.6.4 post-generation patches applied')
           PATCH_EOF
           python3 /tmp/patch_wear_062.py
 
-      - name: Verify Wear 0.6.3 standalone source, Modifier import and captcha flow
+      - name: Apply Wear OS 0.6.4 navigation, embedded CAPTCHA and ARMv7 patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/patch_wear_064.py <<'PY'
+          from pathlib import Path
+          import re
+          import xml.etree.ElementTree as ET
+
+          ROOT = Path('wear/src/main')
+          PKG = ROOT / 'kotlin/com/zailinn/c001apk/wear'
+
+          # 1) Make all eight destinations true peers in one horizontal navigation rail.
+          channel_file = PKG / 'ChannelScreens.kt'
+          s = channel_file.read_text()
+          start = s.index('@Composable\nfun ChannelHubScreen(')
+          end = s.index('\n@Composable\nprivate fun FeedChannel(', start)
+          new_channel_hub = r'''@Composable
+          fun ChannelHubScreen(
+              container: WearContainer,
+              onOpenFeed: (Datum) -> Unit,
+              onOpenUser: (String) -> Unit,
+              onOpenTarget: (Datum) -> Unit,
+              onOpenCategory: (Datum) -> Unit,
+              onLogin: () -> Unit,
+              onProfile: (String) -> Unit,
+              onAbout: () -> Unit,
+              onOpenMineList: (String, String?) -> Unit,
+              onOpenNotification: (String) -> Unit,
+              onOpenSettingsSection: (String) -> Unit,
+          ) {
+              // All eight destinations share one pager and one persistent horizontal rail.
+              val navItems = listOf("推荐", "热门", "话题", "数码", "酷图", "搜索", "我的", "设置")
+              val settingsRevision = container.settingsRevision
+              val configuredHome = container.getInt("home_channel", 1).coerceIn(1, 5)
+              val pager = rememberPagerState(initialPage = configuredHome - 1) { navItems.size }
+              val scope = rememberCoroutineScope()
+              val railState = rememberScrollState()
+
+              LaunchedEffect(settingsRevision, configuredHome) {
+                  val page = configuredHome - 1
+                  if (pager.currentPage != page) pager.animateScrollToPage(page)
+              }
+
+              Column(Modifier.fillMaxSize()) {
+                  Row(
+                      modifier = Modifier
+                          .fillMaxWidth()
+                          .horizontalScroll(railState)
+                          .padding(horizontal = 7.dp, vertical = 4.dp),
+                      horizontalArrangement = Arrangement.spacedBy(5.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                  ) {
+                      navItems.forEachIndexed { index, title ->
+                          ChoiceButton(
+                              text = title,
+                              selected = pager.currentPage == index,
+                              onClick = { scope.launch { pager.animateScrollToPage(index) } },
+                              modifier = Modifier.animateContentSize().heightIn(min = 36.dp),
+                          )
+                      }
+                  }
+
+                  HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
+                      when (page) {
+                          0 -> FeedChannel(container, "推荐", null, null, onOpenFeed, onOpenUser, onOpenTarget)
+                          1 -> FeedChannel(container, "热门", "/page?url=V9_HOME_TAB_RANKING", "热榜", onOpenFeed, onOpenUser, onOpenTarget)
+                          2 -> CategoryIndexChannel(container, topic = true, onOpenCategory = onOpenCategory)
+                          3 -> CategoryIndexChannel(container, topic = false, onOpenCategory = onOpenCategory)
+                          4 -> FeedChannel(container, "酷图", "/page?url=V11_FIND_COOLPIC", "酷图", onOpenFeed, onOpenUser, onOpenTarget)
+                          5 -> SearchChannel(container, onOpenFeed, onOpenUser, onOpenTarget)
+                          6 -> MeScreen(
+                              container = container,
+                              onLogin = onLogin,
+                              onProfile = onProfile,
+                              onAbout = onAbout,
+                              onSettings = { scope.launch { pager.animateScrollToPage(7) } },
+                              onOpenList = onOpenMineList,
+                              onOpenNotification = onOpenNotification,
+                          )
+                          else -> SettingsScreen(
+                              container = container,
+                              onLogin = onLogin,
+                              onOpenSection = onOpenSettingsSection,
+                              onAbout = onAbout,
+                          )
+                      }
+                  }
+              }
+          }
+          '''
+          s = s[:start] + new_channel_hub + s[end:]
+          s = s.replace('private data class Channel(val title: String)\nprivate val channels = listOf("搜索", "推荐", "热门", "话题", "数码", "酷图")\n\n', '', 1)
+          channel_file.write_text(s)
+
+          # Route the My and Settings pager pages through the same navigation host for their sub-pages.
+          wear_app = PKG / 'WearApp.kt'
+          ws = wear_app.read_text()
+          old = '''                            onOpenCategory = ::openCategory,
+                                      onMe = { navController.navigate("me") },
+                                      onSettings = { navController.navigate("settings") },
+          '''
+          new_args = '''                            onOpenCategory = ::openCategory,
+                                      onLogin = { navController.navigate("login") },
+                                      onProfile = { uid -> navController.navigate("user/$uid") },
+                                      onAbout = { navController.navigate("about") },
+                                      onOpenMineList = ::openMineList,
+                                      onOpenNotification = ::openNotification,
+                                      onOpenSettingsSection = { section -> navController.navigate("settings/$section") },
+          '''
+          if old not in ws:
+              raise SystemExit('Cannot locate home ChannelHub callback arguments in WearApp.kt')
+          ws = ws.replace(old, new_args, 1)
+          wear_app.write_text(ws)
+
+          # 2) Let the active challenge accept the short-lived validation value from the embedded engine.
+          coordinator = PKG / 'WearCaptchaCoordinator.kt'
+          s = coordinator.read_text()
+          old_pending = '''        internal val result = CompletableDeferred<String?>()
+                  fun cancel() { result.complete(null) }
+          '''
+          new_pending = '''        internal val result = CompletableDeferred<String?>()
+                  fun cancel() { result.complete(null) }
+
+                  /** Convert the CAPTCHA validate token into the Core proof; never store it. */
+                  fun acceptValidate(validate: String?): Boolean {
+                      val proof = challenge.proof(validate) ?: return false
+                      return result.complete(proof)
+                  }
+          '''
+          if old_pending not in s:
+              raise SystemExit('Cannot locate Pending result block in WearCaptchaCoordinator.kt')
+          s = s.replace(old_pending, new_pending, 1)
+          old_accept = '''        val validate = uri.getQueryParameter("validate") ?: return false
+                  val proof = active.challenge.proof(validate) ?: return false
+                  return active.result.complete(proof)
+          '''
+          new_accept = '''        val validate = uri.getQueryParameter("validate") ?: return false
+                  return active.acceptValidate(validate)
+          '''
+          if old_accept not in s:
+              raise SystemExit('Cannot locate coordinator acceptReturn proof block')
+          s = s.replace(old_accept, new_accept, 1)
+          coordinator.write_text(s)
+
+          # 3) Replace external browser handoff with an in-app WebView-first / ARMv7 GeckoView fallback.
+          browser_source = r'''package com.zailinn.c001apk.wear
+
+          import android.content.Context
+          import android.net.Uri
+          import android.net.http.SslError
+          import android.webkit.CookieManager
+          import android.webkit.SslErrorHandler
+          import android.webkit.WebChromeClient
+          import android.webkit.WebResourceError
+          import android.webkit.WebResourceRequest
+          import android.webkit.WebSettings
+          import android.webkit.WebView
+          import android.webkit.WebViewClient
+          import androidx.compose.foundation.layout.Arrangement
+          import androidx.compose.foundation.layout.Column
+          import androidx.compose.foundation.layout.Spacer
+          import androidx.compose.foundation.layout.fillMaxSize
+          import androidx.compose.foundation.layout.fillMaxWidth
+          import androidx.compose.foundation.layout.height
+          import androidx.compose.foundation.layout.padding
+          import androidx.compose.runtime.Composable
+          import androidx.compose.runtime.DisposableEffect
+          import androidx.compose.runtime.getValue
+          import androidx.compose.runtime.mutableStateOf
+          import androidx.compose.runtime.remember
+          import androidx.compose.runtime.setValue
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.platform.LocalContext
+          import androidx.compose.ui.text.style.TextAlign
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.viewinterop.AndroidView
+          import androidx.wear.compose.material3.Button
+          import androidx.wear.compose.material3.FilledTonalButton
+          import androidx.wear.compose.material3.MaterialTheme
+          import androidx.wear.compose.material3.Text
+          import com.zailinn.c001apk.core.net.CaptchaChallenge
+          import org.mozilla.geckoview.AllowOrDeny
+          import org.mozilla.geckoview.GeckoResult
+          import org.mozilla.geckoview.GeckoRuntime
+          import org.mozilla.geckoview.GeckoSession
+          import org.mozilla.geckoview.GeckoView
+
+          /** One Gecko runtime for this app process. GeckoView is packaged for ARMv7 only. */
+          private object WearGeckoRuntime {
+              @Volatile private var instance: GeckoRuntime? = null
+
+              fun get(context: Context): GeckoRuntime = instance ?: synchronized(this) {
+                  instance ?: GeckoRuntime.create(context.applicationContext).also { instance = it }
+              }
+          }
+
+          private fun hasUsableSystemWebView(context: Context): Boolean = runCatching {
+              if (WebView.getCurrentWebViewPackage() == null) return@runCatching false
+              WebView(context).apply { destroy() }
+              true
+          }.getOrDefault(false)
+
+          private fun captchaHtml(challenge: CaptchaChallenge): String {
+              val id = challenge.captchaId
+              return """<!doctype html>
+          <html lang="zh-CN"><head>
+          <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+          <title>酷安人机验证</title>
+          <style>
+          *{box-sizing:border-box}body{font:15px sans-serif;margin:10px;padding:0 4px;color:#f2f2f2;background:#141419;text-align:center}
+          h3{font-size:18px;margin:10px 0}#status{line-height:1.5;color:#d3d5df}
+          #captcha{margin:16px auto;max-width:300px;min-height:90px}
+          a{display:none;margin:18px auto;padding:13px 18px;border-radius:24px;background:#8bd5a8;color:#092114;text-decoration:none;font-weight:700}
+          </style></head><body>
+          <h3>酷安人机验证</h3><p id="status">正在加载验证组件…</p><div id="captcha"></div>
+          <a id="return" href="#">验证完成，返回酷安</a>
+          <script>
+          function statusText(t){document.getElementById('status').textContent=t;}
+          var timeout=setTimeout(function(){statusText('验证组件加载超时，请检查网络后重试');},25000);
+          var script=document.createElement('script');
+          script.src='https://cstaticdun.126.net/load.min.js';
+          script.onerror=function(){clearTimeout(timeout);statusText('验证组件加载失败，请检查手表 Wi‑Fi 或 LTE');};
+          script.onload=function(){
+           if(typeof initNECaptcha!=='function'){clearTimeout(timeout);statusText('验证组件不可用，请稍后重试');return;}
+           try{
+            initNECaptcha({captchaId:'""" + id + """',element:'#captcha',protocol:'https',mode:'embed',apiVersion:2,width:Math.max(220,Math.min(280,window.innerWidth-28))+'px',lang:'zh-CN',
+             onVerify:function(err,data){
+              if(!err && data && data.validate){
+               clearTimeout(timeout);
+               var link='c001apk-wear://captcha?cid=""" + id + """&validate='+encodeURIComponent(data.validate);
+               var a=document.getElementById('return');a.href=link;a.style.display='inline-block';
+               statusText('验证完成，请点击下方按钮返回酷安。');
+              }else{statusText('验证未通过，请按页面提示重试。');}
+             }
+            },function(){clearTimeout(timeout);statusText('请按页面提示完成人机验证');},function(){clearTimeout(timeout);statusText('无法初始化验证，请检查网络后重试');});
+           }catch(e){clearTimeout(timeout);statusText('验证初始化失败，请稍后重试');}
+          };
+          document.head.appendChild(script);
+          </script></body></html>"""
+          }
+
+          private fun handleCaptchaReturn(rawUrl: String, pending: WearCaptchaCoordinator.Pending, updateStatus: (String) -> Unit): Boolean {
+              val uri = runCatching { Uri.parse(rawUrl) }.getOrNull() ?: return false
+              if (uri.scheme != "c001apk-wear" || uri.host != "captcha") return false
+              val challengeId = uri.getQueryParameter("cid")
+              val validate = uri.getQueryParameter("validate")
+              val accepted = challengeId == pending.challenge.captchaId && pending.acceptValidate(validate)
+              updateStatus(if (accepted) "验证通过，正在返回评论…" else "验证信息无效，请重新完成验证")
+              return true
+          }
+
+          @Composable
+          fun WearCaptchaScreen(pending: WearCaptchaCoordinator.Pending) {
+              val context = LocalContext.current
+              val html = remember(pending.challenge.captchaId) { captchaHtml(pending.challenge) }
+              val webViewAvailable = remember(context) { hasUsableSystemWebView(context) }
+              var forceGecko by remember(pending) { mutableStateOf(!webViewAvailable) }
+              var status by remember(pending) { mutableStateOf("请在下方完成验证码。手表需要连接 Wi‑Fi 或 LTE。") }
+              val handleUrl: (String) -> Boolean = { url -> handleCaptchaReturn(url, pending) { status = it } }
+
+              val geckoRuntime = remember(context, forceGecko) {
+                  if (!forceGecko) null else runCatching { WearGeckoRuntime.get(context) }.getOrNull()
+              }
+
+              Column(
+                  modifier = Modifier.fillMaxSize().padding(horizontal = 7.dp, vertical = 5.dp),
+                  horizontalAlignment = Alignment.CenterHorizontally,
+                  verticalArrangement = Arrangement.spacedBy(5.dp),
+              ) {
+                  Text("酷安人机验证", style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+                  Text(
+                      if (!forceGecko) "正在使用手表系统 WebView（内嵌）" else "正在使用 32 位 GeckoView（内嵌备用引擎）",
+                      style = MaterialTheme.typography.labelSmall,
+                      textAlign = TextAlign.Center,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  )
+
+                  when {
+                      webViewAvailable && !forceGecko -> {
+                          var browser by remember(pending) { mutableStateOf<WebView?>(null) }
+                          DisposableEffect(pending) {
+                              onDispose {
+                                  browser?.apply {
+                                      stopLoading()
+                                      loadUrl("about:blank")
+                                      removeAllViews()
+                                      destroy()
+                                  }
+                                  browser = null
+                              }
+                          }
+                          AndroidView(
+                              modifier = Modifier.weight(1f).fillMaxWidth(),
+                              factory = { ctx ->
+                                  WebView(ctx).apply {
+                                      browser = this
+                                      settings.javaScriptEnabled = true
+                                      settings.domStorageEnabled = true
+                                      settings.databaseEnabled = false
+                                      settings.allowFileAccess = false
+                                      settings.allowContentAccess = false
+                                      settings.javaScriptCanOpenWindowsAutomatically = false
+                                      settings.setSupportMultipleWindows(false)
+                                      settings.cacheMode = WebSettings.LOAD_DEFAULT
+                                      settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                                      CookieManager.getInstance().setAcceptCookie(true)
+                                      CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                                      webChromeClient = WebChromeClient()
+                                      webViewClient = object : WebViewClient() {
+                                          override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                                              val url = request.url.toString()
+                                              if (handleUrl(url)) return true
+                                              val scheme = request.url.scheme.orEmpty().lowercase()
+                                              return scheme != "http" && scheme != "https"
+                                          }
+
+                                          override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
+                                              handler.cancel()
+                                          }
+
+                                          override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                                              if (request.isForMainFrame) status = "验证页面加载失败，请检查手表网络后重试。"
+                                          }
+                                      }
+                                      loadDataWithBaseURL("https://www.coolapk.com/", html, "text/html", "UTF-8", null)
+                                  }
+                              },
+                          )
+                      }
+
+                      geckoRuntime != null -> {
+                          val session = remember(geckoRuntime, pending.challenge.captchaId) {
+                              GeckoSession().apply {
+                                  navigationDelegate = object : GeckoSession.NavigationDelegate {
+                                      override fun onLoadRequest(
+                                          session: GeckoSession,
+                                          request: GeckoSession.NavigationDelegate.LoadRequest,
+                                      ): GeckoResult<AllowOrDeny>? {
+                                          val url = request.uri.orEmpty()
+                                          if (handleUrl(url)) return GeckoResult.deny()
+                                          val scheme = runCatching { Uri.parse(url).scheme }.getOrNull()
+                                          return if (scheme == "http" || scheme == "https" || scheme == "data") null else GeckoResult.deny()
+                                      }
+                                  }
+                                  open(geckoRuntime)
+                                  load(GeckoSession.Loader().data(html, "text/html"))
+                              }
+                          }
+                          DisposableEffect(session) {
+                              onDispose { runCatching { session.close() } }
+                          }
+                          AndroidView(
+                              modifier = Modifier.weight(1f).fillMaxWidth(),
+                              factory = { ctx -> GeckoView(ctx).apply { setSession(session) } },
+                          )
+                      }
+
+                      else -> {
+                          Text(
+                              "这台手表没有可用的系统 WebView，32 位 GeckoView 也无法启动。验证码不能在此设备上显示；不会跳转到手机或外部浏览器。",
+                              modifier = Modifier.weight(1f).fillMaxWidth().padding(8.dp),
+                              style = MaterialTheme.typography.bodySmall,
+                              textAlign = TextAlign.Center,
+                              color = MaterialTheme.colorScheme.error,
+                          )
+                      }
+                  }
+
+                  if (webViewAvailable && !forceGecko) {
+                      FilledTonalButton(
+                          onClick = { forceGecko = true; status = "正在切换至 GeckoView 备用引擎…" },
+                          modifier = Modifier.fillMaxWidth(),
+                      ) { Text("网页无法验证？切换备用内核") }
+                  } else if (webViewAvailable && forceGecko) {
+                      FilledTonalButton(
+                          onClick = { forceGecko = false; status = "已切回系统 WebView" },
+                          modifier = Modifier.fillMaxWidth(),
+                      ) { Text("切回系统 WebView") }
+                  }
+                  Text(status, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                  Spacer(Modifier.height(1.dp))
+                  Button(
+                      onClick = { pending.cancel() },
+                      modifier = Modifier.fillMaxWidth(),
+                      label = { Text("取消验证") },
+                  )
+              }
+          }
+          '''
+          (PKG / 'WearCaptchaBrowser.kt').write_text(browser_source)
+
+          # 4) Update settings/help text so it accurately describes embedded verification.
+          more = PKG / 'MoreScreens.kt'
+          s = more.read_text()
+          s = s.replace('const val WEAR_VERSION_NAME = "0.6.4"', 'const val WEAR_VERSION_NAME = "0.6.4"')
+          s = s.replace('\"PRIVACY\" to (\"隐私\" to \"浏览历史、外部浏览器\")', '\"PRIVACY\" to (\"隐私\" to \"浏览历史、手表内置验证\")')
+          s = s.replace('\"PRIVACY\" to (\"隐私\" to \"浏览历史、外部浏览器\")', '\"PRIVACY\" to (\"隐私\" to \"浏览历史、手表内置验证\")')
+          s = s.replace('item { MenuButton("打开酷安网站", "评论验证和网页内容使用系统浏览器") { if (!openExternalUrl(context, "https://www.coolapk.com/")) message = "手表没有可用的外部浏览器" } }',
+          '''item { MenuButton("内置浏览验证", "系统 WebView 优先，32 位 GeckoView 备用") { message = "验证码只在手表 App 内显示；验证通过后由 Core 网络层自动重试评论请求。" } }''')
+          s = s.replace('item { Text("浏览器中的登录和验证状态不会自动复制到手表客户端。", style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center) }',
+          '''item { Text("验证码只返回一次性验证证明，不会把网页 Cookie 覆盖为酷安账号 Cookie。账号仍由手表客户端自己的登录信息管理。", style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center) }''')
+          s = s.replace('本应用不嵌入 WebView。遇到酷安人机验证时，可在动态详情中选择‘浏览器查看完整评论’，在系统浏览器中完成验证或登录。',
+          '''验证页面优先使用手表系统 WebView；如果系统没有提供，则使用仅包含 armeabi-v7a 的 GeckoView。验证码在本 App 内完成，不调用手机或外部浏览器。''')
+          s = s.replace('使用外部浏览器，不在手表内嵌网页', '在手表应用内完成验证（需联网）')
+          s = s.replace('item { MenuButton("打开酷安验证页面", "在手表应用内完成验证（需联网）") {\n                        if (!openExternalUrl(context, "https://www.coolapk.com/")) message = "手表没有可用浏览器，请在手机上打开酷安。"\n                    } }', 'item { MenuButton("内置验证码说明", "验证会在评论受限时自动弹出") { message = "在评论列表中触发验证后，页面会直接显示在本 App 内。" } }')
+          more.write_text(s)
+
+          # 5) Add the Mozilla Maven repository for the ABI-specific GeckoView artifact.
+          settings = Path('settings.gradle.kts')
+          ss = settings.read_text()
+          if 'https://maven.mozilla.org/maven2/' not in ss:
+              marker = 'dependencyResolutionManagement {'
+              pos = ss.find(marker)
+              if pos < 0:
+                  raise SystemExit('dependencyResolutionManagement block not found in settings.gradle.kts')
+              tail = ss[pos:]
+              needle = '        mavenCentral()'
+              ix = tail.find(needle)
+              if ix < 0:
+                  raise SystemExit('mavenCentral() not found in dependencyResolutionManagement.repositories')
+              insert_at = pos + ix + len(needle)
+              ss = ss[:insert_at] + '\n        maven { url = uri("https://maven.mozilla.org/maven2/") }' + ss[insert_at:]
+          settings.write_text(ss)
+
+          # 6) Lock the Wear APK to 32-bit ARM and bundle the matching GeckoView engine.
+          wbuild = Path('wear/build.gradle.kts')
+          bs = wbuild.read_text()
+          bs = bs.replace('versionCode = 2026103107', 'versionCode = 2026103108')
+          bs = bs.replace('versionName = "0.6.4"', 'versionName = "0.6.4"')
+          if 'abiFilters.add("armeabi-v7a")' not in bs:
+              target = 'versionName = "0.6.4"'
+              if target not in bs:
+                  raise SystemExit('Cannot locate Wear versionName for ABI filter insertion')
+              bs = bs.replace(target, target + '\n                  ndk {\n                      abiFilters.add("armeabi-v7a")\n                  }', 1)
+          if 'geckoview-armeabi-v7a:159.0.20261022150525' not in bs:
+              target = '    implementation(project(":core"))'
+              if target not in bs:
+                  raise SystemExit('Cannot locate :core dependency to add GeckoView')
+              bs = bs.replace(target, target + '\n    implementation("org.mozilla.geckoview:geckoview-armeabi-v7a:159.0.20261022150525")', 1)
+          # Keep phone-remote interaction out of the standalone Wear app.
+          bs = re.sub(r'^\s*implementation\("androidx\.wear:wear-remote-interactions:[^"]+"\)\s*\n', '', bs, flags=re.M)
+          wbuild.write_text(bs)
+
+          print('0.6.4 navigation, in-app CAPTCHA browser and 32-bit ARM7 configuration applied')
+          PY
+          python3 /tmp/patch_wear_064.py
+
+      - name: Verify Wear OS 0.6.4 navigation, in-app CAPTCHA and ARMv7 ABI
         shell: bash
         run: |
           set -euo pipefail
           W=wear/src/main/kotlin/com/zailinn/c001apk/wear
           REPO=core/src/main/kotlin/com/zailinn/c001apk/core/net/CoolapkRepository.kt
+          CLIENT=core/src/main/kotlin/com/zailinn/c001apk/core/net/CoolapkClient.kt
           test -s "$REPO"
+          test -s "$CLIENT"
           test -s wear/build.gradle.kts
           grep -q '":wear"' settings.gradle.kts
-          grep -q 'versionCode = 2026103107' wear/build.gradle.kts
-          grep -q 'versionName = "0.6.3"' wear/build.gradle.kts
+          grep -q 'https://maven.mozilla.org/maven2/' settings.gradle.kts
+          grep -q 'versionCode = 2026103108' wear/build.gradle.kts
+          grep -q 'versionName = "0.6.4"' wear/build.gradle.kts
+          grep -q 'abiFilters.add("armeabi-v7a")' wear/build.gradle.kts
+          grep -q 'geckoview-armeabi-v7a:159.0.20261022150525' wear/build.gradle.kts
           test -s "$W/WearCaptchaCoordinator.kt"
           test -s "$W/WearCaptchaBrowser.kt"
           test -s wear/src/main/res/xml/captcha_file_paths.xml
@@ -4064,26 +4518,37 @@ jobs:
           grep -q 'TextFieldValue' "$W/Components.kt"
           grep -q 'client.captchaVerifier = captcha::verify' "$W/WearContainer.kt"
           grep -q 'fun acceptCaptchaReturn' "$W/WearContainer.kt"
-          grep -Fq "captchaId:'\$id'" "$W/WearCaptchaBrowser.kt"
-          grep -Fq 'c001apk-wear://captcha?cid=$id&validate=' "$W/WearCaptchaBrowser.kt"
+          grep -Fq 'val navItems = listOf("推荐", "热门", "话题", "数码", "酷图", "搜索", "我的", "设置")' "$W/ChannelScreens.kt"
+          grep -q 'horizontalScroll(railState)' "$W/ChannelScreens.kt"
+          grep -q '6 -> MeScreen(' "$W/ChannelScreens.kt"
+          grep -q 'else -> SettingsScreen(' "$W/ChannelScreens.kt"
+          grep -q 'android.webkit.WebView' "$W/WearCaptchaBrowser.kt"
+          grep -q 'GeckoView' "$W/WearCaptchaBrowser.kt"
+          grep -q 'GeckoSession.NavigationDelegate' "$W/WearCaptchaBrowser.kt"
+          grep -q 'GeckoResult.deny()' "$W/WearCaptchaBrowser.kt"
+          grep -q 'pending.acceptValidate(validate)' "$W/WearCaptchaBrowser.kt"
+          grep -q 'fun acceptValidate(validate: String?)' "$W/WearCaptchaCoordinator.kt"
+          grep -q 'c001apk-wear://captcha?cid=' "$W/WearCaptchaBrowser.kt"
+          grep -q 'WEAR_VERSION_NAME = "0.6.4"' "$W/MoreScreens.kt"
+          grep -q '内置浏览验证' "$W/MoreScreens.kt"
           grep -q 'feedReplies(id, listType, page, fromAuthor)' "$W/DetailScreens.kt"
           grep -q 'subRepliesVerified(origin.id.orEmpty(), page)' "$W/DetailScreens.kt"
           grep -q '在手表验证后查看全部评论' "$W/DetailScreens.kt"
           grep -q '无需手机' "$W/DetailScreens.kt"
           grep -q 'androidx.core.content.FileProvider' wear/src/main/AndroidManifest.xml
           grep -q 'c001apk-wear' wear/src/main/AndroidManifest.xml
-          if grep -RIn 'android.webkit.WebView' "$W"; then
-            echo 'Wear module must not depend on WebView.' >&2; exit 1
-          fi
           if grep -RInE 'RemoteActivityHelper|wear-remote-interactions' "$W" wear/build.gradle.kts; then
             echo 'Wear module must not require paired-phone remote interactions.' >&2; exit 1
           fi
+          if grep -RInE 'ACTION_VIEW|startActivity\(' "$W/WearCaptchaBrowser.kt"; then
+            echo 'CAPTCHA browser must stay inside the Wear app.' >&2; exit 1
+          fi
           for api in feedReplies feedRepliesWithoutPrompt subReplies subRepliesVerified; do
-            grep -Eq "suspend fun ${api}\\b" "$REPO" || { echo "Missing Core API: $api" >&2; exit 1; }
+            grep -Eq "suspend fun ${api}\b" "$REPO" || { echo "Missing Core API: $api" >&2; exit 1; }
           done
           python3 - <<'PY'
           from pathlib import Path
-          import re, xml.etree.ElementTree as ET
+          import xml.etree.ElementTree as ET
           base = Path('wear/src/main')
           ET.parse(base / 'AndroidManifest.xml')
           ns = '{http://schemas.android.com/apk/res/android}'
@@ -4099,33 +4564,62 @@ jobs:
           assert len(kotlin) >= 16, len(kotlin)
           components = (base / 'kotlin/com/zailinn/c001apk/wear/Components.kt').read_text()
           assert components.count('fun WatchTextField(') == 1
-          wear_app = (base / 'kotlin/com/zailinn/c001apk/wear/WearApp.kt').read_text()
-          assert 'import androidx.compose.ui.Modifier' in wear_app
-          assert wear_app.count('Modifier.fillMaxSize()') >= 2
-          print(f'Validated manifest, FileProvider, captcha deep link, Modifier import and {len(kotlin)} Kotlin files.')
+          assert 'TextFieldValue' in components
+          channel = (base / 'kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt').read_text()
+          nav = 'val navItems = listOf("推荐", "热门", "话题", "数码", "酷图", "搜索", "我的", "设置")'
+          assert nav in channel
+          assert 'horizontalScroll(railState)' in channel
+          assert '6 -> MeScreen(' in channel and 'else -> SettingsScreen(' in channel
+          assert 'onSettings = { scope.launch { pager.animateScrollToPage(7) } }' in channel
+          browser = (base / 'kotlin/com/zailinn/c001apk/wear/WearCaptchaBrowser.kt').read_text()
+          assert 'WebView(ctx)' in browser and 'GeckoView(ctx)' in browser
+          assert 'captchaId:' in browser and 'data.validate' in browser and 'c001apk-wear://captcha?cid=' in browser
+          assert 'GeckoResult.deny()' in browser and 'pending.acceptValidate(validate)' in browser
+          assert 'startActivity(' not in browser and 'ACTION_VIEW' not in browser
+          coord = (base / 'kotlin/com/zailinn/c001apk/wear/WearCaptchaCoordinator.kt').read_text()
+          assert 'fun acceptValidate(validate: String?)' in coord
+          build = Path('wear/build.gradle.kts').read_text()
+          assert 'abiFilters.add("armeabi-v7a")' in build
+          assert 'geckoview-armeabi-v7a:159.0.20261022150525' in build
+          assert 'arm64-v8a' not in build
+          print(f'Validated 8-entry single navigation rail, on-watch WebView/GeckoView proof callback, manifest and {len(kotlin)} Kotlin files; ABI filter is armeabi-v7a only.')
           PY
-          python3 -m py_compile /tmp/patch_wear_062.py
-          echo 'Wear OS 0.6.3 source checks passed.'
+          python3 -m py_compile /tmp/patch_wear_064.py
+          echo 'Wear OS 0.6.4 source and 32-bit ABI checks passed.'
 
-      - name: Build Wear OS 0.6.3 release APK
+      - name: Build Wear OS 0.6.4 32-bit ARMv7 release APK
         run: |
           chmod +x ./gradlew
           ./gradlew :wear:assembleRelease --no-daemon --stacktrace
 
-      - name: Verify APK 0.6.3 output
+      - name: Verify APK 0.6.4 output and native ABI
         run: |
           set -euo pipefail
           ls -lh wear/build/outputs/apk/release/
           test -s wear/build/outputs/apk/release/wear-release.apk
           mkdir -p dist
-          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.3-Modifier-Fix-GalaxyWatch7.apk
-          sha256sum dist/Coolapk-WearOS-v0.6.3-Modifier-Fix-GalaxyWatch7.apk > dist/SHA256SUMS.txt
-          printf 'versionName=0.6.3\nversionCode=2026103107\ncompileSdk=37.0\nbuildTools=37.0.0\n' > dist/BUILD_INFO.txt
+          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.6.4-32bit-InternalCaptcha-GalaxyWatch7.apk
+          sha256sum dist/Coolapk-WearOS-v0.6.4-32bit-InternalCaptcha-GalaxyWatch7.apk > dist/SHA256SUMS.txt
+          python3 - <<'PY'
+          import zipfile
+          apk = 'dist/Coolapk-WearOS-v0.6.4-32bit-InternalCaptcha-GalaxyWatch7.apk'
+          with zipfile.ZipFile(apk) as z:
+              abis = sorted({n.split('/')[1] for n in z.namelist() if n.startswith('lib/') and len(n.split('/')) > 2})
+          print('APK native ABI folders:', abis)
+          assert 'armeabi-v7a' in abis, f'ARMv7 native libs missing: {abis}'
+          forbidden = {'arm64-v8a', 'x86', 'x86_64'} & set(abis)
+          assert not forbidden, f'64-bit / x86 native libs unexpectedly packaged: {sorted(forbidden)}'
+          with open('dist/ABI_REPORT.txt', 'w') as f:
+              f.write('native_abis=' + ','.join(abis) + '\n')
+              f.write('required=armeabi-v7a\n')
+              f.write('64bit_or_x86=none\n')
+          PY
+          printf 'versionName=0.6.4\nversionCode=2026103108\ncompileSdk=37.0\nbuildTools=37.0.0\nabi=armeabi-v7a-only\nwebview=system-first\ngeckoview=159.0.20261022150525-armeabi-v7a\n' > dist/BUILD_INFO.txt
           printf 'source=%s\ncommit=%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> dist/BUILD_INFO.txt
 
       - name: Upload Wear APK
         uses: actions/upload-artifact@v7
         with:
-          name: Coolapk-WearOS-v0.6.3-Modifier-Fix-GalaxyWatch7
+          name: Coolapk-WearOS-v0.6.4-32bit-InternalCaptcha-GalaxyWatch7
           path: dist/
           if-no-files-found: error
