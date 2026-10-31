@@ -1,9 +1,9 @@
-# 酷安 Wear OS 0.5.0 / Galaxy Watch7 SDK37 修复版自动编译工作流
+# 酷安 Wear OS 0.5.1 / Galaxy Watch7 Kotlin 编译修复版自动编译工作流
 # 使用：上传到 .github/workflows/wear-apk.yml 后提交到 main。
 # 基于你最新上传的原版源码构建，保留 :core 网络层；手表端单独适配圆屏 UI。
 
-name: Build Coolapk Wear OS v0.5.0 - SDK37 Fix - Galaxy Watch7
-run-name: Wear OS 0.5.0 SDK37 修复构建
+name: Build Coolapk Wear OS v0.5.1 - Kotlin Fix - Galaxy Watch7
+run-name: Wear OS 0.5.1 Kotlin 修复构建
 
 on:
   push:
@@ -84,8 +84,8 @@ jobs:
                   applicationId = "com.zailinn.c001apk.wear"
                   minSdk = 30
                   targetSdk = 36
-                  versionCode = 2026103101
-                  versionName = "0.5.0"
+                  versionCode = 2026103102
+                  versionName = "0.5.1"
               }
           
               compileOptions {
@@ -390,13 +390,13 @@ jobs:
               val scope = rememberCoroutineScope()
               val placeholder = softPainter()
               androidx.compose.foundation.layout.Box(
-                  modifier = androidx.compose.foundation.layout.fillMaxSize(),
+                  modifier = Modifier.fillMaxSize(),
                   contentAlignment = Alignment.Center,
               ) {
                   AsyncImage(
                       model = urls.getOrNull(index),
                       contentDescription = null,
-                      modifier = androidx.compose.foundation.layout.fillMaxSize().clickable {
+                      modifier = Modifier.fillMaxSize().clickable {
                           if (urls.isNotEmpty()) index = (index + 1) % urls.size
                           message = null
                       },
@@ -665,7 +665,7 @@ jobs:
           private fun SearchResultCard(item: Datum, onOpenFeed: (Datum) -> Unit, onOpenUser: (String) -> Unit, onOpenTarget: (Datum) -> Unit) {
               val click = when (item.entityType) {
                   "feed" -> ({ onOpenFeed(item) })
-                  "user" -> ({ item.uid?.let(onOpenUser) })
+                  "user" -> ({ item.uid?.let(onOpenUser); Unit })
                   "product", "topic" -> ({ onOpenTarget(item) })
                   else -> ({})
               }
@@ -1620,7 +1620,7 @@ jobs:
                       item { ListHeader { Text("关于") } }
                       item {
                           Text(
-                              "酷安 Wear OS 版 0.5.0",
+                              "酷安 Wear OS 版 0.5.1",
                               style = MaterialTheme.typography.titleSmall,
                               textAlign = TextAlign.Center,
                           )
@@ -2410,8 +2410,8 @@ jobs:
         run: |
           set -euo pipefail
           grep -q '":wear"' settings.gradle.kts
-          grep -q 'versionCode = 2026103101' wear/build.gradle.kts
-          grep -q 'versionName = \"0.5.0\"' wear/build.gradle.kts
+          grep -q 'versionCode = 2026103102' wear/build.gradle.kts
+          grep -q 'versionName = \"0.5.1\"' wear/build.gradle.kts
           test -f wear/src/main/AndroidManifest.xml
           test -f wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
           test -f wear/src/main/kotlin/com/zailinn/c001apk/wear/ImageSaver.kt
@@ -2431,6 +2431,11 @@ jobs:
           grep -q '"酷图"' wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
           grep -q '"搜索"' wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
           grep -q 'HorizontalPager' wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
+          if grep -q 'androidx.compose.foundation.layout.fillMaxSize()' wear/src/main/kotlin/com/zailinn/c001apk/wear/AccountScreens.kt; then
+            echo 'Invalid fully-qualified extension call to fillMaxSize() remains in AccountScreens.kt'; exit 1
+          fi
+          grep -q 'Modifier.fillMaxSize()' wear/src/main/kotlin/com/zailinn/c001apk/wear/AccountScreens.kt
+          grep -q 'item.uid?.let(onOpenUser); Unit' wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
           grep -q 'replyRows' wear/src/main/kotlin/com/zailinn/c001apk/wear/Components.kt
           grep -q 'subReplies(origin.id.orEmpty(), page)' wear/src/main/kotlin/com/zailinn/c001apk/wear/DetailScreens.kt
           grep -q 'MediaStore.Images.Media' wear/src/main/kotlin/com/zailinn/c001apk/wear/ImageSaver.kt
@@ -2453,13 +2458,13 @@ jobs:
           ls -lh wear/build/outputs/apk/release/
           test -s wear/build/outputs/apk/release/wear-release.apk
           mkdir -p dist
-          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.5.0-SDK37-Fix-GalaxyWatch7.apk
-          sha256sum dist/Coolapk-WearOS-v0.5.0-SDK37-Fix-GalaxyWatch7.apk > dist/SHA256SUMS.txt
-          printf 'versionName=0.5.0\nversionCode=2026103101\ncompileSdk=37.0\nbuildTools=37.0.0\nsource=ZaiLinn/c001apk (uploaded ZIP)\n' > dist/BUILD_INFO.txt
+          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.5.1-Kotlin-Fix-GalaxyWatch7.apk
+          sha256sum dist/Coolapk-WearOS-v0.5.1-Kotlin-Fix-GalaxyWatch7.apk > dist/SHA256SUMS.txt
+          printf 'versionName=0.5.1\nversionCode=2026103102\ncompileSdk=37.0\nbuildTools=37.0.0\nsource=ZaiLinn/c001apk (uploaded ZIP)\n' > dist/BUILD_INFO.txt
 
       - name: Upload Wear APK
         uses: actions/upload-artifact@v7
         with:
-          name: Coolapk-WearOS-v0.5.0-SDK37-Fix-GalaxyWatch7
+          name: Coolapk-WearOS-v0.5.1-Kotlin-Fix-GalaxyWatch7
           path: dist/
           if-no-files-found: error
