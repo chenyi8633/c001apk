@@ -1,9 +1,9 @@
-# 酷安 Wear OS 0.5.1 / Galaxy Watch7 Kotlin 编译修复版自动编译工作流
+# 酷安 Wear OS 0.5.2 / Galaxy Watch7 分类内容与功能检查修复版自动编译工作流
 # 使用：上传到 .github/workflows/wear-apk.yml 后提交到 main。
 # 基于你最新上传的原版源码构建，保留 :core 网络层；手表端单独适配圆屏 UI。
 
-name: Build Coolapk Wear OS v0.5.1 - Kotlin Fix - Galaxy Watch7
-run-name: Wear OS 0.5.1 Kotlin 修复构建
+name: Build Coolapk Wear OS v0.5.2 - Category Fix - Galaxy Watch7
+run-name: Wear OS 0.5.2 分类页修复构建
 
 on:
   push:
@@ -75,24 +75,24 @@ jobs:
               alias(libs.plugins.android.application)
               alias(libs.plugins.kotlin.compose)
           }
-          
+
           android {
               namespace = "com.zailinn.c001apk.wear"
               compileSdk = 37
-          
+
               defaultConfig {
                   applicationId = "com.zailinn.c001apk.wear"
                   minSdk = 30
                   targetSdk = 36
-                  versionCode = 2026103102
-                  versionName = "0.5.1"
+                  versionCode = 2026103103
+                  versionName = "0.5.2"
               }
-          
+
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
                   targetCompatibility = JavaVersion.VERSION_17
               }
-          
+
               buildTypes {
                   // Release build for direct sideloading. Keep R8 off here because the
                   // original Coolapk data model is intentionally dynamic JSON.
@@ -102,16 +102,16 @@ jobs:
                       signingConfig = signingConfigs.getByName("debug")
                   }
               }
-          
+
               buildFeatures {
                   compose = true
               }
-          
+
               packaging {
                   resources.excludes += setOf("META-INF/{AL2.0,LGPL2.1}", "META-INF/versions/9/OSGI-INF/MANIFEST.MF")
               }
           }
-          
+
           kotlin {
               compilerOptions {
                   jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
@@ -123,11 +123,11 @@ jobs:
                   )
               }
           }
-          
+
           dependencies {
               implementation(project(":core"))
               implementation(libs.kotlinx.coroutines.android)
-          
+
               implementation(platform(libs.androidx.compose.bom))
               implementation(libs.androidx.compose.ui)
               implementation(libs.androidx.compose.foundation)
@@ -136,7 +136,7 @@ jobs:
               implementation(libs.androidx.core.ktx)
               implementation(libs.coil.compose)
               implementation(libs.coil.network.okhttp)
-          
+
               implementation("androidx.wear.compose:compose-material3:1.5.0")
               implementation("androidx.wear.compose:compose-foundation:1.5.0")
               implementation("androidx.wear.compose:compose-navigation:1.5.0")
@@ -159,10 +159,10 @@ jobs:
           cat > wear/src/main/AndroidManifest.xml <<'WEAR_EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-          
+
               <uses-feature android:name="android.hardware.type.watch" />
               <uses-permission android:name="android.permission.INTERNET" />
-          
+
               <application
                   android:name=".WearApplication"
                   android:allowBackup="false"
@@ -171,11 +171,11 @@ jobs:
                   android:networkSecurityConfig="@xml/network_security_config"
                   android:supportsRtl="true"
                   android:theme="@android:style/Theme.DeviceDefault">
-          
+
                   <meta-data
                       android:name="com.google.android.wearable.standalone"
                       android:value="true" />
-          
+
                   <activity
                       android:name=".MainActivity"
                       android:exported="true"
@@ -191,7 +191,7 @@ jobs:
           WEAR_EOF
           cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/AccountScreens.kt <<'WEAR_EOF'
           package com.zailinn.c001apk.wear
-          
+
           import androidx.compose.foundation.clickable
           import androidx.compose.foundation.background
           import androidx.compose.foundation.layout.Column
@@ -228,7 +228,7 @@ jobs:
           import com.zailinn.c001apk.core.model.LoadResult
           import kotlinx.coroutines.launch
           import java.net.URLDecoder
-          
+
           @Composable
           fun MeScreen(container: WearContainer, onLogin: () -> Unit, onProfile: (String) -> Unit, onAbout: () -> Unit) {
               val account = container.account
@@ -240,7 +240,7 @@ jobs:
               }
               val listState = rememberScalingLazyListState()
               val name = account?.let { runCatching { URLDecoder.decode(it.username, "UTF-8") }.getOrDefault(it.username) }
-          
+
               ScreenScaffold(scrollState = listState) { padding ->
                   ScalingLazyColumn(
                       modifier = Modifier.fillMaxSize(),
@@ -316,7 +316,7 @@ jobs:
                   }
               }
           }
-          
+
           @Composable
           fun LoginScreen(container: WearContainer, onDone: () -> Unit) {
               var text by remember { mutableStateOf("") }
@@ -324,7 +324,7 @@ jobs:
               var message by remember { mutableStateOf<String?>(null) }
               val scope = rememberCoroutineScope()
               val listState = rememberScalingLazyListState()
-          
+
               fun submit() {
                   if (busy || text.isBlank()) return
                   busy = true
@@ -335,7 +335,7 @@ jobs:
                       if (error == null) onDone() else message = error
                   }
               }
-          
+
               ScreenScaffold(
                   scrollState = listState,
                   edgeButton = {
@@ -379,7 +379,7 @@ jobs:
                   }
               }
           }
-          
+
           /** Full-screen picture. Tap the image to move to the next one; the bottom action saves it. */
           @Composable
           fun ImageViewerScreen(urls: List<String>, startIndex: Int, container: WearContainer) {
@@ -431,7 +431,7 @@ jobs:
           WEAR_EOF
           cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt <<'WEAR_EOF'
           package com.zailinn.c001apk.wear
-          
+
           import androidx.compose.foundation.horizontalScroll
           import androidx.compose.foundation.layout.Arrangement
           import androidx.compose.foundation.layout.Column
@@ -469,10 +469,10 @@ jobs:
           import com.zailinn.c001apk.core.model.LoadResult
           import com.zailinn.c001apk.core.net.Page
           import kotlinx.coroutines.launch
-          
+
           private data class Channel(val title: String)
           private val channels = listOf("搜索", "推荐", "热门", "话题", "数码", "酷图")
-          
+
           @Composable
           fun ChannelHubScreen(
               container: WearContainer,
@@ -515,7 +515,7 @@ jobs:
                   }
               }
           }
-          
+
           @Composable
           private fun FeedChannel(
               container: WearContainer,
@@ -546,11 +546,12 @@ jobs:
                   }
               }
           }
-          
+
           @Composable
           private fun CategoryIndexChannel(container: WearContainer, topic: Boolean, onOpenCategory: (Datum) -> Unit) {
               var state by remember(topic) { mutableStateOf<LoadResult<List<Datum>>>(LoadResult.Loading) }
-              LaunchedEffect(topic) {
+              var retry by remember(topic) { mutableIntStateOf(0) }
+              LaunchedEffect(topic, retry) {
                   state = if (topic) {
                       when (val result = container.repository.dataListFromUrl("/v6/page/dataList", listOf("url" to "V11_VERTICAL_TOPIC", "title" to "话题", "page" to "1"))) {
                           is LoadResult.Success -> LoadResult.Success(result.value.firstOrNull()?.entities.orEmpty())
@@ -568,7 +569,10 @@ jobs:
                   ScalingLazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = padding) {
                       item { ListHeader { Text(if (topic) "话题" else "数码") } }
                       if (state is LoadResult.Loading) item { PulsingText("加载中…") }
-                      if (state is LoadResult.Error) item { Text((state as LoadResult.Error).message, style = MaterialTheme.typography.bodySmall) }
+                      if (state is LoadResult.Error) {
+                          item { Text((state as LoadResult.Error).message, style = MaterialTheme.typography.bodySmall) }
+                          item { FilledTonalButton(onClick = { retry++ }, modifier = Modifier.fillMaxWidth()) { Text("重新加载") } }
+                      }
                       items(list, key = { it.entityId ?: it.id ?: it.hashCode().toString() }) { item ->
                           FilledTonalButton(
                               onClick = { onOpenCategory(item) },
@@ -580,7 +584,7 @@ jobs:
                   }
               }
           }
-          
+
           @Composable
           private fun SearchChannel(
               container: WearContainer,
@@ -609,7 +613,7 @@ jobs:
                   }
               }
           }
-          
+
           @Composable
           private fun SearchResultsSection(
               container: WearContainer,
@@ -626,7 +630,7 @@ jobs:
                   SearchTypeButton(container, keyword, "用户", "user", onOpenFeed, onOpenUser, onOpenTarget)
               }
           }
-          
+
           @Composable
           private fun SearchTypeButton(
               container: WearContainer,
@@ -640,27 +644,42 @@ jobs:
               var opened by remember(keyword, type) { mutableStateOf(false) }
               var results by remember(keyword, type) { mutableStateOf<List<Datum>>(emptyList()) }
               var loading by remember(keyword, type) { mutableStateOf(false) }
+              var retry by remember(keyword, type) { mutableIntStateOf(0) }
+              var error by remember(keyword, type) { mutableStateOf<String?>(null) }
               Column(Modifier.fillMaxWidth()) {
                   FilledTonalButton(onClick = {
-                      if (opened) return@FilledTonalButton
+                      if (opened && (loading || error == null)) return@FilledTonalButton
                       opened = true
                       loading = true
+                      error = null
+                      retry++
                       // Launching from composition is avoided; the visible result section is loaded below.
                   }, modifier = Modifier.fillMaxWidth()) { Text("$label 结果") }
                   if (opened && !loading) {
-                      results.forEach { item -> SearchResultCard(item, onOpenFeed, onOpenUser, onOpenTarget) }
+                      if (error != null) {
+                          Text(error.orEmpty(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                          FilledTonalButton(onClick = { retry++; loading = true; error = null }, modifier = Modifier.fillMaxWidth()) { Text("重试") }
+                      } else if (results.isEmpty()) {
+                          Text("没有找到相关内容", style = MaterialTheme.typography.labelSmall)
+                      } else {
+                          results.forEach { item -> SearchResultCard(item, onOpenFeed, onOpenUser, onOpenTarget) }
+                      }
                   }
                   if (opened && loading) {
-                      LaunchedEffect(keyword, type) {
-                          val result = container.repository.search(type, "all", "default", keyword, 0, null, null, Page())
-                          results = (result as? LoadResult.Success)?.value.orEmpty().take(8)
+                      LaunchedEffect(keyword, type, retry) {
+                          when (val result = container.repository.search(type, "all", "default", keyword, 0, null, null, Page())) {
+                              is LoadResult.Success -> { results = result.value.take(8); error = null }
+                              is LoadResult.Error -> error = result.message
+                              LoadResult.Empty -> { results = emptyList(); error = null }
+                              LoadResult.Loading -> Unit
+                          }
                           loading = false
                       }
                       PulsingText("加载中…")
                   }
               }
           }
-          
+
           @Composable
           private fun SearchResultCard(item: Datum, onOpenFeed: (Datum) -> Unit, onOpenUser: (String) -> Unit, onOpenTarget: (Datum) -> Unit) {
               val click = when (item.entityType) {
@@ -673,7 +692,7 @@ jobs:
                   Text(item.title ?: item.displayName.ifBlank { item.messageTitle ?: plainText(item.message.orEmpty()) }, maxLines = 2, overflow = TextOverflow.Ellipsis)
               }
           }
-          
+
           @Composable
           fun CategoryFeedScreen(
               container: WearContainer,
@@ -683,23 +702,150 @@ jobs:
               onOpenTarget: (Datum) -> Unit,
           ) {
               val title = category.title.orEmpty().ifBlank { "板块" }
-              val url = category.url.orEmpty()
-              val feed = remember(url, container.accountVersion) { PagedFeed { page -> container.repository.dataList(url, title, page, hideFolded = true) } }
+              val baseUrl = category.url.orEmpty().trim()
+              var activeUrl by remember(baseUrl) { mutableStateOf(baseUrl) }
+              var selectedSortUrl by remember(baseUrl) { mutableStateOf<String?>(null) }
+              val feed = remember(baseUrl, container.accountVersion) {
+                  PagedFeed { page ->
+                      // The phone app requests config/sort cards here, then handles them in its list layer.
+                      container.repository.dataList(activeUrl, title, page, includeConfigCard = true)
+                  }
+              }
+              val sortCard = remember(feed.items) { feed.items.firstOrNull { it.entityTemplate == "sortSelectCard" } }
+              val sortOptions = remember(sortCard) {
+                  sortCard?.entities.orEmpty().filter { !it.title.isNullOrBlank() && !it.url.isNullOrBlank() }
+              }
+              LaunchedEffect(sortCard) {
+                  if (sortCard != null && selectedSortUrl == null && sortOptions.isNotEmpty()) {
+                      val selectedTab = sortCard.obj("extraData")?.string("selectedTab") ?: runCatching {
+                          val raw = sortCard.text("extraData")
+                          val parsed = kotlinx.serialization.json.Json.parseToJsonElement(raw) as? kotlinx.serialization.json.JsonObject
+                          (parsed?.get("selectedTab") as? kotlinx.serialization.json.JsonPrimitive)?.content
+                      }.getOrNull()
+                      val selected = sortOptions.firstOrNull { it.title == selectedTab } ?: sortOptions.first()
+                      selectedSortUrl = selected.url
+                      val targetUrl = selected.url.orEmpty()
+                      if (targetUrl.isNotBlank() && targetUrl != activeUrl) {
+                          activeUrl = targetUrl
+                          feed.reset()
+                      }
+                  }
+              }
+              // Reload after choosing a server-provided sort URL, and fetch the first page on entry.
+              LaunchedEffect(activeUrl, feed.loadedPages) {
+                  if (baseUrl.isNotBlank() && feed.items.isEmpty() && feed.error == null && !feed.ended) {
+                      feed.loadNext()
+                  }
+              }
+              val visibleItems = remember(feed.items) {
+                  feed.items.filterNot {
+                      it.entityTemplate == "configCard" || it.entityTemplate == "sortSelectCard" ||
+                          (it.entityTemplate == "imageScaleCard" && it.picArr.isEmpty())
+                  }
+              }
               val state = rememberScalingLazyListState()
-              val cards = remember(feed.items) { feed.items.filter { it.entityType == "feed" } }
-              LaunchedEffect(feed.loadedPages) { if (feed.loadedPages == 0) feed.loadNext() }
-              PrefetchNearEnd(feed, state, cards.size)
+              PrefetchNearEnd(feed, state, visibleItems.size)
+
               ScreenScaffold(scrollState = state) { padding ->
                   ScalingLazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = padding) {
                       item { ListHeader { Text(title) } }
-                      items(cards, key = { it.entityId ?: it.id ?: it.hashCode().toString() }) { post ->
-                          FeedCard(post, onClick = { onOpenFeed(post) }, onUser = onOpenUser, onTarget = onOpenTarget)
+                      if (baseUrl.isBlank()) {
+                          item {
+                              Text("这个板块没有可用的内容地址", style = MaterialTheme.typography.bodySmall)
+                          }
                       }
-                      item { ListFooter(feed, emptyText = "没有更多内容") }
+                      if (sortOptions.isNotEmpty()) {
+                          item {
+                              Row(
+                                  Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                  horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                  verticalAlignment = Alignment.CenterVertically,
+                              ) {
+                                  sortOptions.forEach { option ->
+                                      FilledTonalButton(
+                                          onClick = {
+                                              val nextUrl = option.url.orEmpty()
+                                              if (nextUrl.isNotBlank() && nextUrl != activeUrl) {
+                                                  selectedSortUrl = nextUrl
+                                                  activeUrl = nextUrl
+                                                  feed.reset()
+                                              }
+                                          },
+                                      ) {
+                                          Text(
+                                              option.title.orEmpty() + if (selectedSortUrl == option.url) " ✓" else "",
+                                              maxLines = 1,
+                                          )
+                                      }
+                                  }
+                              }
+                          }
+                      }
+                      items(visibleItems, key = { it.entityId ?: it.id ?: it.hashCode().toString() }) { item ->
+                          when (item.entityType) {
+                              "feed" -> FeedCard(
+                                  item,
+                                  onClick = { onOpenFeed(item) },
+                                  onUser = onOpenUser,
+                                  onTarget = onOpenTarget,
+                              )
+                              "product", "topic" -> FilledTonalButton(
+                                  onClick = { onOpenTarget(item) },
+                                  modifier = Modifier.fillMaxWidth(),
+                                  icon = { if (!item.logo.isNullOrBlank()) Avatar(item.logo, 30.dp) },
+                                  label = {
+                                      Text(item.title.orEmpty().ifBlank { "查看板块" }, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                  },
+                                  secondaryLabel = {
+                                      Text(
+                                          listOfNotNull(
+                                              item.string("hot_num_txt")?.let { "${it}热度" },
+                                              item.string("feed_comment_num_txt")?.let { "${it}讨论" },
+                                          ).joinToString(" · ").ifBlank { "进入详情" },
+                                          maxLines = 1,
+                                      )
+                                  },
+                              )
+                              "user" -> FilledTonalButton(
+                                  onClick = { item.uid?.let(onOpenUser); Unit },
+                                  modifier = Modifier.fillMaxWidth(),
+                                  icon = { Avatar(item.userAvatar, 28.dp) },
+                                  label = { Text(item.username.orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                  secondaryLabel = { Text("查看用户主页", maxLines = 1) },
+                              )
+                              "card" -> CategoryInfoCard(item)
+                              else -> CategoryInfoCard(item)
+                          }
+                      }
+                      if (baseUrl.isNotBlank()) {
+                          item {
+                              ListFooter(
+                                  feed,
+                                  emptyText = if (visibleItems.isEmpty()) "这个板块暂时没有内容" else "没有更多了",
+                              )
+                          }
+                      }
                   }
               }
           }
-          
+
+          @Composable
+          private fun CategoryInfoCard(item: Datum) {
+              val title = item.title.orEmpty()
+              val description = item.description.orEmpty().ifBlank { item.text("message") }
+              if (title.isBlank() && description.isBlank()) return
+              Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 5.dp)) {
+                  if (title.isNotBlank()) Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                  if (description.isNotBlank()) Text(
+                      plainText(description),
+                      style = MaterialTheme.typography.bodySmall,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant,
+                      maxLines = 3,
+                      overflow = TextOverflow.Ellipsis,
+                  )
+              }
+          }
+
           @Composable
           private fun PrefetchNearEnd(feed: PagedFeed, state: androidx.wear.compose.foundation.lazy.ScalingLazyListState, count: Int) {
               LaunchedEffect(state, count) {
@@ -708,10 +854,11 @@ jobs:
                   }
               }
           }
+
           WEAR_EOF
           cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/Components.kt <<'WEAR_EOF'
           package com.zailinn.c001apk.wear
-          
+
           import androidx.compose.animation.core.RepeatMode
           import androidx.compose.animation.core.animateFloat
           import androidx.compose.animation.core.infiniteRepeatable
@@ -762,13 +909,13 @@ jobs:
           import coil3.compose.AsyncImage
           import com.zailinn.c001apk.core.model.Datum
           import kotlinx.coroutines.launch
-          
+
           /** The one brand accent, used for names, links and the selected state. */
           val Brand = Color(0xFF2EC27E)
-          
+
           @Composable
           fun softPainter(): ColorPainter = ColorPainter(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.14f))
-          
+
           @Composable
           fun Avatar(url: String?, size: Dp, modifier: Modifier = Modifier) {
               val placeholder = softPainter()
@@ -782,7 +929,7 @@ jobs:
                   fallback = placeholder,
               )
           }
-          
+
           /** A round badge with the first letter, for accounts without a picture. */
           @Composable
           fun LetterBadge(text: String, size: Dp) {
@@ -793,7 +940,7 @@ jobs:
                   Text(text.take(1), style = MaterialTheme.typography.labelMedium, color = Color.Black)
               }
           }
-          
+
           /** A feed in a list: who, what, a picture, and the counts. */
           @Composable
           fun FeedCard(
@@ -855,7 +1002,7 @@ jobs:
                   Text(stats, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
               }
           }
-          
+
           /** Compact, horizontally scrollable topic/model chips for the circular watch display. */
           @Composable
           fun FeedRelations(feed: Datum, onOpenTarget: (Datum) -> Unit) {
@@ -894,7 +1041,7 @@ jobs:
                   }
               }
           }
-          
+
           /** A comment with its embedded sub-reply preview, matching the phone client's nested replies. */
           @Composable
           fun ReplyCard(reply: Datum, onUser: (String) -> Unit, onOpenThread: (Datum) -> Unit) {
@@ -917,7 +1064,7 @@ jobs:
                   Text(text, style = MaterialTheme.typography.bodySmall, maxLines = 6, overflow = TextOverflow.Ellipsis)
                   Spacer(Modifier.height(3.dp))
                   Text(meta, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-          
+
                   val nested = reply.replyRows.take(3)
                   if (nested.isNotEmpty()) {
                       Spacer(Modifier.height(5.dp))
@@ -960,7 +1107,7 @@ jobs:
                   }
               }
           }
-          
+
           /** A soft breathing text for loading states. The fade runs in the draw phase, so it never re-composes. */
           @Composable
           fun PulsingText(text: String) {
@@ -977,7 +1124,7 @@ jobs:
                   modifier = Modifier.graphicsLayer { this.alpha = alpha },
               )
           }
-          
+
           /** Loads the next page when it scrolls into view; shows errors with a retry button. */
           @Composable
           fun ListFooter(feed: PagedFeed, emptyText: String = "没有更多了") {
@@ -1000,7 +1147,7 @@ jobs:
                   }
               }
           }
-          
+
           /** A button that is filled when selected, tonal otherwise. */
           @Composable
           fun ChoiceButton(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
@@ -1010,9 +1157,9 @@ jobs:
                   FilledTonalButton(onClick = onClick, modifier = modifier, label = { Text(text, maxLines = 1) })
               }
           }
-          
+
           class Choice(val label: String, val selected: Boolean, val onClick: () -> Unit)
-          
+
           @Composable
           fun ChoiceRow(vararg options: Choice) {
               Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
@@ -1021,7 +1168,7 @@ jobs:
                   }
               }
           }
-          
+
           /** A rounded text box that opens the watch keyboard when tapped. */
           @Composable
           fun WatchTextField(
@@ -1063,7 +1210,7 @@ jobs:
           WEAR_EOF
           cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/DetailScreens.kt <<'WEAR_EOF'
           package com.zailinn.c001apk.wear
-          
+
           import androidx.compose.animation.animateContentSize
           import androidx.compose.foundation.layout.Spacer
           import androidx.compose.foundation.layout.fillMaxSize
@@ -1103,7 +1250,7 @@ jobs:
           import kotlinx.coroutines.launch
           import kotlinx.serialization.json.JsonObject
           import kotlinx.serialization.json.JsonPrimitive
-          
+
           @Composable
           fun DetailScreen(
               container: WearContainer,
@@ -1119,7 +1266,7 @@ jobs:
               var liking by remember { mutableStateOf(false) }
               val scope = rememberCoroutineScope()
               val id = initial.id ?: initial.entityId.orEmpty()
-          
+
               // The list copy is shown at once; the full text replaces it when it arrives.
               LaunchedEffect(id) {
                   val result = container.repository.feedDetail(id)
@@ -1129,14 +1276,14 @@ jobs:
                   val listType = if (sort == 0) "lastupdate_desc" else "dateline_desc"
                   PagedFeed { page -> container.repository.feedRepliesWithoutPrompt(id, listType, page).result }
               }
-          
+
               val listState = rememberScalingLazyListState()
               val body = remember(feed) { plainText(feed.text("message")).ifBlank { feed.messageTitle.orEmpty() } }
               val pictures = remember(feed) { feed.picArr }
               val meta = remember(feed) { "${relativeTime(feed.dateline)}   💬 ${feed.string("replynum") ?: "0"}" }
               val replyCards = remember(replies.items) { replies.items.filter { it.entityType == "feed_reply" } }
               val placeholder = softPainter()
-          
+
               fun toggleLike() {
                   if (!container.session.isLogin) {
                       notice = "登录后才能点赞"
@@ -1163,7 +1310,7 @@ jobs:
                       }
                   }
               }
-          
+
               ScreenScaffold(scrollState = listState) { padding ->
                   ScalingLazyColumn(
                       modifier = Modifier.fillMaxSize(),
@@ -1256,7 +1403,7 @@ jobs:
                   }
               }
           }
-          
+
           @Composable
           fun ReplyThreadScreen(
               container: WearContainer,
@@ -1310,7 +1457,7 @@ jobs:
                   if (list.loadedPages == 0) list.loadNext()
               }
           }
-          
+
           @Composable
           fun UserScreen(
               container: WearContainer,
@@ -1324,7 +1471,7 @@ jobs:
               var failure by remember(uid) { mutableStateOf<String?>(null) }
               var notice by remember(uid) { mutableStateOf<String?>(null) }
               val scope = rememberCoroutineScope()
-          
+
               LaunchedEffect(uid) {
                   when (val result = container.repository.userSpace(uid)) {
                       is LoadResult.Success -> info = result.value
@@ -1338,7 +1485,7 @@ jobs:
               val cards = remember(feeds.items) { feeds.items.filter { it.entityType == "feed" } }
               val listState = rememberScalingLazyListState()
               PrefetchWhenNearEnd(feeds, listState, cards.size)
-          
+
               fun toggleFollow() {
                   val current = info ?: return
                   if (!container.session.isLogin) {
@@ -1359,7 +1506,7 @@ jobs:
                       }
                   }
               }
-          
+
               ScreenScaffold(scrollState = listState) { padding ->
                   ScalingLazyColumn(
                       modifier = Modifier.fillMaxSize(),
@@ -1442,7 +1589,7 @@ jobs:
                   }
               }
           }
-          
+
           @Composable
           private fun PrefetchWhenNearEnd(feed: PagedFeed, listState: androidx.wear.compose.foundation.lazy.ScalingLazyListState, count: Int) {
               LaunchedEffect(listState, count) {
@@ -1454,7 +1601,7 @@ jobs:
           WEAR_EOF
           cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/HomeScreens.kt <<'WEAR_EOF'
           package com.zailinn.c001apk.wear
-          
+
           import androidx.compose.foundation.layout.Spacer
           import androidx.compose.foundation.layout.fillMaxSize
           import androidx.compose.foundation.layout.fillMaxWidth
@@ -1481,9 +1628,9 @@ jobs:
           import androidx.wear.compose.material3.ScreenScaffold
           import androidx.wear.compose.material3.Text
           import com.zailinn.c001apk.core.model.Datum
-          
+
           private fun keyOf(item: Datum): String = item.entityId ?: item.id ?: item.hashCode().toString()
-          
+
           /** A feed list that fetches the next page a little before the end is reached. */
           @Composable
           private fun PrefetchWhenNearEnd(feed: PagedFeed, listState: ScalingLazyListState, count: Int) {
@@ -1493,7 +1640,7 @@ jobs:
                   }
               }
           }
-          
+
           @Composable
           fun HomeScreen(
               container: WearContainer,
@@ -1509,7 +1656,7 @@ jobs:
               PrefetchWhenNearEnd(feed, listState, cards.size)
               val account = container.account
               val name = account?.let { runCatching { java.net.URLDecoder.decode(it.username, "UTF-8") }.getOrDefault(it.username) }
-          
+
               ScreenScaffold(
                   scrollState = listState,
                   edgeButton = { EdgeButton(onClick = onSearch) { Text("搜索") } },
@@ -1536,7 +1683,7 @@ jobs:
                   }
               }
           }
-          
+
           @Composable
           fun SearchScreen(container: WearContainer, onSubmit: (String) -> Unit) {
               var text by remember { mutableStateOf("") }
@@ -1581,7 +1728,7 @@ jobs:
                   }
               }
           }
-          
+
           @Composable
           fun ResultsScreen(
               keyword: String,
@@ -1607,7 +1754,7 @@ jobs:
                   }
               }
           }
-          
+
           @Composable
           fun AboutScreen() {
               val listState = rememberScalingLazyListState()
@@ -1620,7 +1767,7 @@ jobs:
                       item { ListHeader { Text("关于") } }
                       item {
                           Text(
-                              "酷安 Wear OS 版 0.5.1",
+                              "酷安 Wear OS 版 0.5.2",
                               style = MaterialTheme.typography.titleSmall,
                               textAlign = TextAlign.Center,
                           )
@@ -1639,7 +1786,7 @@ jobs:
           WEAR_EOF
           cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/ImageSaver.kt <<'WEAR_EOF'
           package com.zailinn.c001apk.wear
-          
+
           import android.content.ContentValues
           import android.content.Context
           import android.os.Build
@@ -1651,7 +1798,7 @@ jobs:
           import okhttp3.OkHttpClient
           import okhttp3.Request
           import java.net.URLConnection
-          
+
           /** Saves a remote image into the watch gallery without requiring storage permission on Android 10+. */
           suspend fun saveWatchImage(context: Context, http: OkHttpClient, rawUrl: String): Result<Unit> = withContext(Dispatchers.IO) {
               runCatching {
@@ -1710,11 +1857,11 @@ jobs:
           WEAR_EOF
           cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/MainActivity.kt <<'WEAR_EOF'
           package com.zailinn.c001apk.wear
-          
+
           import android.os.Bundle
           import androidx.activity.ComponentActivity
           import androidx.activity.compose.setContent
-          
+
           class MainActivity : ComponentActivity() {
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
@@ -1725,7 +1872,7 @@ jobs:
           WEAR_EOF
           cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/PagedFeed.kt <<'WEAR_EOF'
           package com.zailinn.c001apk.wear
-          
+
           import androidx.compose.runtime.getValue
           import androidx.compose.runtime.mutableIntStateOf
           import androidx.compose.runtime.mutableStateOf
@@ -1736,7 +1883,7 @@ jobs:
           import com.zailinn.c001apk.core.model.cursorLastId
           import com.zailinn.c001apk.core.net.Page
           import kotlinx.coroutines.CancellationException
-          
+
           /** A list that loads page after page, with the same cursors the phone app uses. */
           class PagedFeed(private val load: suspend (Page) -> LoadResult<List<Datum>>) {
               var items by mutableStateOf<List<Datum>>(emptyList())
@@ -1745,17 +1892,17 @@ jobs:
                   private set
               var ended by mutableStateOf(false)
                   private set
-          
+
               /** Counts finished loads, so the screen knows when to ask for the next page. */
               var loadedPages by mutableIntStateOf(0)
                   private set
-          
+
               private var loading = false
               private var page = 1
               private var first: String? = null
               private var last: String? = null
               private var epoch = 0
-          
+
               /** Starts over, as after a login; answers still on their way for the old list are dropped. */
               fun reset() {
                   epoch++
@@ -1768,7 +1915,7 @@ jobs:
                   ended = false
                   loadedPages++
               }
-          
+
               suspend fun loadNext() {
                   if (loading || ended) return
                   loading = true
@@ -1804,7 +1951,7 @@ jobs:
           WEAR_EOF
           cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/TargetScreen.kt <<'WEAR_EOF'
           package com.zailinn.c001apk.wear
-          
+
           import androidx.compose.foundation.layout.Column
           import androidx.compose.foundation.layout.Row
           import androidx.compose.foundation.layout.Spacer
@@ -1834,10 +1981,10 @@ jobs:
           import androidx.wear.compose.material3.Text
           import com.zailinn.c001apk.core.model.Datum
           import com.zailinn.c001apk.core.model.LoadResult
-          
+
           /** A topic tag or device/product board resolved from the relation chips on a post. */
           data class WearTarget(val tag: String? = null, val id: String? = null)
-          
+
           @Composable
           fun TargetScreen(
               container: WearContainer,
@@ -1859,7 +2006,7 @@ jobs:
                       LoadResult.Loading -> Unit
                   }
               }
-          
+
               val data = info
               val isProduct = target.id != null || data?.entityType == "product"
               val title = data?.title?.takeIf { it.isNotBlank() } ?: target.tag.orEmpty().ifBlank { "机型/话题" }
@@ -1883,7 +2030,7 @@ jobs:
               }
               val cards = remember(posts.items) { posts.items.filter { it.entityType == "feed" } }
               val listState = rememberScalingLazyListState()
-          
+
               ScreenScaffold(scrollState = listState) { padding ->
                   ScalingLazyColumn(
                       modifier = Modifier.fillMaxSize(),
@@ -1950,16 +2097,16 @@ jobs:
           WEAR_EOF
           cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/Text.kt <<'WEAR_EOF'
           package com.zailinn.c001apk.wear
-          
+
           import android.text.Html
           import android.util.LruCache
           import com.zailinn.c001apk.core.model.Datum
           import java.text.SimpleDateFormat
           import java.util.Date
           import java.util.Locale
-          
+
           private val plainCache = LruCache<String, String>(300)
-          
+
           /** The server sends HTML in messages; the watch shows plain text. Results are cached, since lists re-draw often. */
           fun plainText(html: String): String {
               if (html.isEmpty()) return ""
@@ -1972,19 +2119,19 @@ jobs:
               plainCache.put(html, result)
               return result
           }
-          
+
           /** Server-side thumbnail: far less data than the original, which is plenty for a watch. */
           fun thumbnail(url: String): String {
               val full = fullUrl(url)
               return if (full.endsWith(".s.jpg")) full else "$full.s.jpg"
           }
-          
+
           fun fullUrl(url: String): String = if (url.startsWith("//")) "https:$url" else url
-          
+
           val Datum.avatarUrl: String? get() = userInfo?.userAvatar ?: userAvatar
-          
+
           val Datum.authorUid: String? get() = userInfo?.uid ?: uid
-          
+
           fun relativeTime(seconds: Long?): String {
               if (seconds == null) return ""
               val diff = System.currentTimeMillis() / 1000 - seconds
@@ -1999,7 +2146,7 @@ jobs:
           WEAR_EOF
           cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/WearApp.kt <<'WEAR_EOF'
           package com.zailinn.c001apk.wear
-          
+
           import android.net.Uri
           import androidx.compose.runtime.Composable
           import androidx.compose.runtime.LaunchedEffect
@@ -2014,7 +2161,7 @@ jobs:
           import androidx.wear.compose.navigation.composable
           import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
           import com.zailinn.c001apk.core.model.Datum
-          
+
           /** Values that screens hand to the next one; kept out of route strings so any text is safe. */
           private class NavArgs {
               val feeds = HashMap<String, Datum>()
@@ -2028,7 +2175,7 @@ jobs:
               var images: List<String> = emptyList()
               var imageIndex: Int = 0
           }
-          
+
           /** Resolve the same /t/<tag> and /product/<id> links used by the phone app. */
           private fun targetFrom(item: Datum): WearTarget? {
               val url = item.url.orEmpty()
@@ -2042,14 +2189,14 @@ jobs:
                   else -> null
               }
           }
-          
+
           @Composable
           fun WearApp(container: WearContainer) {
               MaterialTheme {
                   AppScaffold {
                       val navController = rememberSwipeDismissableNavController()
                       val args = remember { NavArgs() }
-          
+
                       // Kept above the navigation host so going back does not reload or lose the scroll position.
                       val homeFeed = remember {
                           PagedFeed { page -> container.repository.homeFeed(page, 1, container.installTime) }
@@ -2057,43 +2204,43 @@ jobs:
                       val homeList = rememberScalingLazyListState()
                       var results by remember { mutableStateOf<PagedFeed?>(null) }
                       val resultsList = rememberScalingLazyListState()
-          
+
                       // A new account sees its own home feed.
                       LaunchedEffect(container.accountVersion) {
                           if (container.accountVersion > 0) homeFeed.reset()
                       }
-          
+
                       fun openFeed(feed: Datum) {
                           val id = feed.id ?: feed.entityId ?: return
                           args.feeds[id] = feed
                           navController.navigate("feed/$id")
                       }
-          
+
                       fun openImages(urls: List<String>, index: Int) {
                           args.images = urls
                           args.imageIndex = index
                           navController.navigate("images")
                       }
-          
+
                       fun openTarget(item: Datum) {
                           val target = targetFrom(item) ?: return
                           val key = "target-${++args.targetIndex}"
                           args.targets[key] = target
                           navController.navigate("target/$key")
                       }
-          
+
                       fun openCategory(item: Datum) {
                           val key = "category-${++args.categoryIndex}"
                           args.categories[key] = item
                           navController.navigate("category/$key")
                       }
-          
+
                       fun openThread(reply: Datum) {
                           val key = "thread-${++args.threadIndex}"
                           args.threads[key] = reply
                           navController.navigate("thread/$key")
                       }
-          
+
                       SwipeDismissableNavHost(navController = navController, startDestination = "home") {
                           composable("home") {
                               ChannelHubScreen(
@@ -2209,23 +2356,23 @@ jobs:
           WEAR_EOF
           cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/WearApplication.kt <<'WEAR_EOF'
           package com.zailinn.c001apk.wear
-          
+
           import android.app.Application
           import coil3.ImageLoader
           import coil3.PlatformContext
           import coil3.SingletonImageLoader
           import coil3.network.okhttp.OkHttpNetworkFetcherFactory
           import coil3.request.crossfade
-          
+
           class WearApplication : Application(), SingletonImageLoader.Factory {
               lateinit var container: WearContainer
                   private set
-          
+
               override fun onCreate() {
                   super.onCreate()
                   container = WearContainer(this)
               }
-          
+
               override fun newImageLoader(context: PlatformContext): ImageLoader = ImageLoader.Builder(context)
                   .components {
                       add(OkHttpNetworkFetcherFactory(callFactory = { container.imageHttp }))
@@ -2237,7 +2384,7 @@ jobs:
           WEAR_EOF
           cat > wear/src/main/kotlin/com/zailinn/c001apk/wear/WearContainer.kt <<'WEAR_EOF'
           package com.zailinn.c001apk.wear
-          
+
           import android.content.Context
           import androidx.compose.runtime.getValue
           import androidx.compose.runtime.mutableIntStateOf
@@ -2255,39 +2402,39 @@ jobs:
           import kotlinx.serialization.json.JsonObject
           import kotlinx.serialization.json.JsonPrimitive
           import okhttp3.OkHttpClient
-          
+
           /** Everything the watch app shares: the phone app's network layer, a guest or Cookie account, and search history. */
           class WearContainer(context: Context) {
               private val prefs = context.getSharedPreferences("wear", Context.MODE_PRIVATE)
               private val protocol: ProtocolParams = loadProtocol()
-          
+
               val installTime: String = prefs.getString("installTime", null)
                   ?: System.currentTimeMillis().toString().also { prefs.edit().putString("installTime", it).apply() }
-          
+
               val session = SessionState()
               private val baseHttp = OkHttpClient()
-          
+
               /** Images only get the client user agent, never API credentials. */
               val imageHttp: OkHttpClient = baseHttp.newBuilder()
                   .addInterceptor { chain ->
                       chain.proceed(chain.request().newBuilder().header("User-Agent", protocol.userAgent).build())
                   }
                   .build()
-          
+
               val client = CoolapkClient(session, CoolapkHeaders(session, { protocol }), baseHttp)
               val repository = CoolapkRepository(client)
-          
+
               /** The signed-in account, or null for guest mode. */
               var account by mutableStateOf<AccountCredentials?>(null)
                   private set
-          
+
               /** Bumped on every login or logout, so account-bound lists reload. */
               var accountVersion by mutableIntStateOf(0)
                   private set
-          
+
               var history by mutableStateOf(readHistory())
                   private set
-          
+
               init {
                   val uid = prefs.getString("acc_uid", null)
                   val name = prefs.getString("acc_name", null)
@@ -2298,7 +2445,7 @@ jobs:
                       session.activate(saved, notify = false)
                   }
               }
-          
+
               /** Checks the pasted Cookie with the server first, like the phone app. Returns an error message, or null on success. */
               suspend fun loginWithCookie(text: String): String? {
                   val pasted = AccountCredentials.parseCookie(text) ?: return "Cookie 缺少有效的 uid、username 或 token"
@@ -2325,31 +2472,31 @@ jobs:
                       return ApiFailure.from(e).message
                   }
               }
-          
+
               fun logout() {
                   prefs.edit().remove("acc_uid").remove("acc_name").remove("acc_token").apply()
                   session.activate(null, notify = true)
                   account = null
                   accountVersion++
               }
-          
+
               fun addHistory(keyword: String) {
                   val clean = keyword.trim()
                   if (clean.isEmpty()) return
                   history = (listOf(clean) + history.filter { it != clean }).take(6)
                   prefs.edit().putString("history", history.joinToString("\n")).apply()
               }
-          
+
               suspend fun saveImage(context: Context, url: String): Result<Unit> = saveWatchImage(context, imageHttp, url)
-          
+
               fun clearHistory() {
                   history = emptyList()
                   prefs.edit().remove("history").apply()
               }
-          
+
               private fun readHistory(): List<String> =
                   prefs.getString("history", null)?.split("\n")?.filter { it.isNotBlank() }.orEmpty()
-          
+
               private fun loadProtocol(): ProtocolParams {
                   val device = prefs.getString("xAppDevice", null)
                   if (device != null) {
@@ -2410,13 +2557,13 @@ jobs:
         run: |
           set -euo pipefail
           grep -q '":wear"' settings.gradle.kts
-          grep -q 'versionCode = 2026103102' wear/build.gradle.kts
-          grep -q 'versionName = \"0.5.1\"' wear/build.gradle.kts
+          grep -q 'versionCode = 2026103103' wear/build.gradle.kts
+          grep -q 'versionName = \"0.5.2\"' wear/build.gradle.kts
           test -f wear/src/main/AndroidManifest.xml
           test -f wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
           test -f wear/src/main/kotlin/com/zailinn/c001apk/wear/ImageSaver.kt
 
-      - name: Check requested Wear features and source API compatibility
+      - name: Check Wear category pages and feature/API compatibility
         shell: bash
         run: |
           set -euo pipefail
@@ -2425,46 +2572,56 @@ jobs:
           for api in homeFeed dataList dataListFromUrl search feedDetail feedRepliesWithoutPrompt subReplies userSpace userFeed topicDetail postAction; do
             grep -Eq "suspend fun ${api}\b" "$REPO" || { echo "Missing core API: ${api}"; exit 1; }
           done
-          grep -q '"热门"' wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
-          grep -q '"话题"' wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
-          grep -q '"数码"' wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
-          grep -q '"酷图"' wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
-          grep -q '"搜索"' wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
-          grep -q 'HorizontalPager' wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
-          if grep -q 'androidx.compose.foundation.layout.fillMaxSize()' wear/src/main/kotlin/com/zailinn/c001apk/wear/AccountScreens.kt; then
-            echo 'Invalid fully-qualified extension call to fillMaxSize() remains in AccountScreens.kt'; exit 1
+          CHANNEL=wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
+          DETAIL=wear/src/main/kotlin/com/zailinn/c001apk/wear/DetailScreens.kt
+          COMP=wear/src/main/kotlin/com/zailinn/c001apk/wear/Components.kt
+          ACCOUNT=wear/src/main/kotlin/com/zailinn/c001apk/wear/AccountScreens.kt
+          TARGET=wear/src/main/kotlin/com/zailinn/c001apk/wear/TargetScreen.kt
+          for text in '"热门"' '"话题"' '"数码"' '"酷图"' '"搜索"' 'HorizontalPager'; do
+            grep -Fq "$text" "$CHANNEL" || { echo "Missing channel UI: $text"; exit 1; }
+          done
+          # Product/category pages must not throw away product entities: the native client renders ItemCard.
+          grep -q 'includeConfigCard = true' "$CHANNEL"
+          grep -q '"product", "topic" -> FilledTonalButton' "$CHANNEL"
+          grep -q 'sortSelectCard' "$CHANNEL"
+          grep -q 'visibleItems' "$CHANNEL"
+          # Keep previously repaired Kotlin compile errors fixed.
+          if grep -q 'androidx.compose.foundation.layout.fillMaxSize()' "$ACCOUNT"; then
+            echo 'Invalid fully-qualified fillMaxSize() call remains'; exit 1
           fi
-          grep -q 'Modifier.fillMaxSize()' wear/src/main/kotlin/com/zailinn/c001apk/wear/AccountScreens.kt
-          grep -q 'item.uid?.let(onOpenUser); Unit' wear/src/main/kotlin/com/zailinn/c001apk/wear/ChannelScreens.kt
-          grep -q 'replyRows' wear/src/main/kotlin/com/zailinn/c001apk/wear/Components.kt
-          grep -q 'subReplies(origin.id.orEmpty(), page)' wear/src/main/kotlin/com/zailinn/c001apk/wear/DetailScreens.kt
+          grep -q 'Modifier.fillMaxSize()' "$ACCOUNT"
+          grep -q 'item.uid?.let(onOpenUser); Unit' "$CHANNEL"
+          # Verify the previously requested interactions are present.
+          grep -q 'replyRows' "$COMP"
+          grep -q 'subReplies(origin.id.orEmpty(), page)' "$DETAIL"
           grep -q 'MediaStore.Images.Media' wear/src/main/kotlin/com/zailinn/c001apk/wear/ImageSaver.kt
-          grep -q 'saveImage(context, url)' wear/src/main/kotlin/com/zailinn/c001apk/wear/AccountScreens.kt
-          grep -q 'userSpace(uid)' wear/src/main/kotlin/com/zailinn/c001apk/wear/DetailScreens.kt
-          grep -q 'topicDetail(target.tag, target.id)' wear/src/main/kotlin/com/zailinn/c001apk/wear/TargetScreen.kt
+          grep -q 'saveImage(context, url)' "$ACCOUNT"
+          grep -q 'userSpace(uid)' "$DETAIL"
+          grep -q 'topicDetail(target.tag, target.id)' "$TARGET"
+          grep -q 'container.repository.search(type, "all", "default", keyword' "$CHANNEL"
           if grep -RIn 'android.webkit.WebView' wear/src/main/kotlin; then
             echo 'Wear module must not require WebView.'; exit 1
           fi
-          echo 'Requested feature/API checks passed.'
+          echo 'Wear feature and source API checks passed.'
 
-      - name: Build Wear release APK
+      - name: Build Wear OS 0.5.2 release APK
         run: |
           chmod +x ./gradlew
           ./gradlew :wear:assembleRelease --no-daemon --stacktrace
 
-      - name: Check APK output
+      - name: Verify APK 0.5.2 output
         run: |
           set -euo pipefail
           ls -lh wear/build/outputs/apk/release/
           test -s wear/build/outputs/apk/release/wear-release.apk
           mkdir -p dist
-          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.5.1-Kotlin-Fix-GalaxyWatch7.apk
-          sha256sum dist/Coolapk-WearOS-v0.5.1-Kotlin-Fix-GalaxyWatch7.apk > dist/SHA256SUMS.txt
-          printf 'versionName=0.5.1\nversionCode=2026103102\ncompileSdk=37.0\nbuildTools=37.0.0\nsource=ZaiLinn/c001apk (uploaded ZIP)\n' > dist/BUILD_INFO.txt
+          cp wear/build/outputs/apk/release/wear-release.apk dist/Coolapk-WearOS-v0.5.2-Category-Fix-GalaxyWatch7.apk
+          sha256sum dist/Coolapk-WearOS-v0.5.2-Category-Fix-GalaxyWatch7.apk > dist/SHA256SUMS.txt
+          printf 'versionName=0.5.2\nversionCode=2026103103\ncompileSdk=37.0\nbuildTools=37.0.0\nsource=ZaiLinn/c001apk (uploaded ZIP)\n' > dist/BUILD_INFO.txt
 
       - name: Upload Wear APK
         uses: actions/upload-artifact@v7
         with:
-          name: Coolapk-WearOS-v0.5.1-Kotlin-Fix-GalaxyWatch7
+          name: Coolapk-WearOS-v0.5.2-Category-Fix-GalaxyWatch7
           path: dist/
           if-no-files-found: error
