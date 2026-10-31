@@ -5889,6 +5889,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          trap 'status=$?; echo "::error::Verification failed at line ${LINENO}: ${BASH_COMMAND} (exit ${status})" >&2; exit "$status"' ERR
           W=wear/src/main/kotlin/com/zailinn/c001apk/wear
           REPO=core/src/main/kotlin/com/zailinn/c001apk/core/net/CoolapkRepository.kt
           CLIENT=core/src/main/kotlin/com/zailinn/c001apk/core/net/CoolapkClient.kt
@@ -5978,7 +5979,7 @@ jobs:
           grep -q 'pending.acceptValidate(validate)' "$W/WearCaptchaBrowser.kt"
           grep -q 'fun acceptValidate(validate: String?)' "$W/WearCaptchaCoordinator.kt"
           grep -q 'c001apk-wear://captcha?cid=' "$W/WearCaptchaBrowser.kt"
-          grep -q 'WEAR_VERSION_NAME = "0.6.8"' "$W/MoreScreens.kt"
+          grep -q 'WEAR_VERSION_NAME = "0.6.9"' "$W/MoreScreens.kt"
           grep -q '内置浏览验证' "$W/MoreScreens.kt"
           grep -q 'feedReplies(id, listType, page, fromAuthor)' "$W/DetailScreens.kt"
           grep -q 'subRepliesVerified(origin.id.orEmpty(), page)' "$W/DetailScreens.kt"
@@ -6081,7 +6082,7 @@ jobs:
           print(f'Validated 8-entry single navigation rail, on-watch WebView/GeckoView proof callback, manifest and {len(kotlin)} Kotlin files; ABI filter is armeabi-v7a only.')
           PY
           python3 -m py_compile /tmp/patch_wear_064.py /tmp/patch_wear_066.py /tmp/patch_wear_067_network.py /tmp/patch_wear_068_navigation.py /tmp/patch_wear_069_return.py
-          echo 'Wear OS 0.6.8 persistent navigation, list restore, glass UI, bounded network recovery, Wear OS 6/7 and ARMv7-only checks passed.'
+          echo 'Wear OS 0.6.9 persistent navigation, list restore, glass UI, bounded network recovery, Wear OS 6/7 and ARMv7-only checks passed.'
           python3 - <<'PY'
           from pathlib import Path
           app = Path('wear/src/main/kotlin/com/zailinn/c001apk/wear/WearApp.kt').read_text()
