@@ -1,9 +1,9 @@
-# Coolapk Wear OS 0.6.27 / Galaxy Watch7 ARMv7 - Gallery back fix + Material 3 image viewer
+# Coolapk Wear OS 0.6.28 / Galaxy Watch7 ARMv7 - Gallery back fix + Material 3 image viewer
 # 使用：将本文件放到 .github/workflows/wear-apk.yml 并提交到 main。
 # 从 Fork 仓库当前提交构建，保留 :core 网络层和已有功能；恢复原版个人主页、我的、私信布局，使用原生弧形时钟和 8 个页面圆点，并在 APK 打包前先运行 Kotlin 编译预检。
 
-name: Build Coolapk Wear OS v0.6.27 - Gallery Back Fix + Material 3 + Core Login + GeckoView
-run-name: Wear OS 0.6.27 多图返回修复、Material 3、手表内登录、GeckoView、32 位 ARMv7
+name: Build Coolapk Wear OS v0.6.28 - Gallery Back Fix + Material 3 + Core Login + GeckoView
+run-name: Wear OS 0.6.28 多图返回修复、Material 3、手表内登录、GeckoView、32 位 ARMv7
 
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/wear-apk-bundle"
           base64 --decode <<'WEAR_APK_BUNDLE' | tar -xz -C "$GITHUB_WORKSPACE"
-          H4sIAJr45moC/+y9a3fcVLIwfD77VwidvBM1tNt2bgSDk3F8IZ5x4ry2Ce8shsdL7lbbwu1WH0kd
+          H4sIAED75moC/+y9a3fcVLIwfD77VwidvBM1tNt2bgSDk3F8IZ5x4ry2Ce8shsdL7lbbwu1WH0kd
           xxO8VrgEkuESGO4QDjAHmDxzhgQYBkIusNbzU2bStvOJ5ye8VbX3lrakLbW6bQfmMA0r7pb2tXbt
           2lW161JasP3F5nyfV3bthu/1rVim22s2lnr7SwdKe/b2eb7V6O0fKHmL/9b1px8+9+/fT3/hE/87
           MLB3QHxnzwf23b9/779p/f92Fz5Nzzdd6P7ffp4fz/K1XqvpaA27YVVNu9YzM/rruempqdkhfdeZ
@@ -1763,7 +1763,7 @@ jobs:
           abF8da2myRc651xLoliRyLelMTcOWXFW1/7XZyacPyf7z8nH6f8105ybT9h/FhY+s/98OvYfp8HM
           +ba1iJthESlEH9h6maa0Xh/49U7L7SN5rAeI7zQe4Rmv15EFgIO+RPrZz07w/5jzPzvzOM9/c2Eh
           af9dOPbZ+f90zv8YQ1PrgeZ92QDhaTiBzcFhoEQGeKOIPxx4Uerf6Xgjqz60Ol4wLrWH0zZA9Ror
-          HEhSR1bjynp9i7bh8frqpNerr7qUQzaoL1+7tHW8/kyr17q78xzaYY/TCILN1uyxhWDSf+SmrNPc
+          HEhSR1bjynp9i7bhifrqpNerr7qUQzaoL1+7tHW8/kyr17q78xzaYY/TCILN1uyxhWDSf+SmrNPc
           xPqFZWhx/caldWcMok7MNL589Qtl6cX2ojfsAm9VgspL9qN2b5cInUC06fyNN1yFnxV4U8U0mC+y
           9bq14QVLASkXKvcGTjDseejFaVefb75ASiJMpmm96CCeLEYhATcM4scAEbWAddumwJ2et4F56pEN
           67mDit5K9fTsrmKysS8UU563W6O+C3/Vt4637Bdq9EKymTAf1vLZNeYtJWtpcxlk6+A9F+1GRLIl
@@ -2094,7 +2094,7 @@ jobs:
           THlgiQNofOznpvmTuZzn0VwrzSDMPqYRJSFrkYDG1TQ6JNJQ/M0TWtcu64jXCFrRhN0ja9R8tO1m
           G9L/QPQafsHyO7sXojcn7C6gpoRDF7p6ekJoK77GRtzQF13dfwtFzoSM0JkBcqXHLnHNyRa4ZmE4
           ElFaTc8oyB5X/nwjORIOdSsNQ7pmopGKOgqpeXIUxeYJs+pi2+4Eg6PtqLxc+EfbL4IruIIruIIr
-          uIIruIIruIIruIIruILr/3P9DAMBj0QAwAgA
+          uIIruIIruIIruIIruILr/3P9DCrKFrEAwAgA
           WEAR_APK_BUNDLE
           test -f .github/scripts/wear-apk-0.6.23/step-21.sh
           chmod +x .github/scripts/wear-apk-0.6.23/*.sh
@@ -2227,7 +2227,9 @@ jobs:
           if legacy_start >= 0:
               legacy_tail = social[legacy_start:]
               declarations = list(re.finditer(r'(?m)^(?:@Composable|private fun\s|fun\s|class\s|data class\s)', legacy_tail))
-              if len(declarations) != 2 or 'LegacySystemWebViewLoginScreen' not in legacy_tail[declarations[1].start():declarations[1].start() + 160]:
+              declaration_text = legacy_tail[declarations[-1].start():declarations[-1].start() + 220] if declarations else ''
+              accepted_names = ('WearWebLoginScreen(', 'LegacySystemWebViewLoginScreen(')
+              if len(declarations) != 2 or not any(name in declaration_text for name in accepted_names):
                   raise SystemExit('Legacy WebView login is not the final top-level declaration; refusing to truncate other screens')
               social = social[:legacy_start].rstrip() + "\n"
           elif 'private fun LegacySystemWebViewLoginScreen' in social or 'fun WearWebLoginScreen' in social:
@@ -2673,6 +2675,10 @@ jobs:
           more = more_path.read_text(encoding='utf-8')
           more = more.replace('32 位 GeckoView 优先，系统 WebView 手动兼容', '手表内置 GeckoView 验证引擎')
           more = more.replace('需要兼容时可手动切换系统 WebView。', '不依赖手表系统 WebView。')
+          if 'const val WEAR_VERSION_NAME = "0.6.25"' in more:
+              more = more.replace('const val WEAR_VERSION_NAME = "0.6.25"', 'const val WEAR_VERSION_NAME = "0.6.28"', 1)
+          elif 'const val WEAR_VERSION_NAME = "0.6.28"' not in more:
+              raise SystemExit('Could not synchronize the visible Wear OS version constant')
           more_path.write_text(more, encoding='utf-8')
           
           about = about_path.read_text(encoding='utf-8')
@@ -2680,6 +2686,9 @@ jobs:
               '登录支持 Cookie 登录和手表网页登录；手表网页登录目前仍使用系统 WebView。评论遇到人机验证时，默认使用 APK 内置的 32 位 ARMv7 GeckoView，必要时可手动切换系统 WebView 兼容模式，再由 Core 网络层重试请求。',
               '登录支持 Cookie 登录和手表内置的 Core API 账号密码登录，不调用系统 WebView。评论遇到人机验证时，直接使用 APK 内置的 32 位 ARMv7 GeckoView，并由 Core 网络层自动重试请求。',
           )
+          about = about.replace('酷安 Wear OS 版 0.6.25', '酷安 Wear OS 版 0.6.28')
+          if '酷安 Wear OS 版 0.6.28' not in about:
+              raise SystemExit('Could not synchronize the About page version label')
           about_path.write_text(about, encoding='utf-8')
           
           # 5. Enable GPU composition and keyboard resize; version bump is exact and guarded.
@@ -2696,7 +2705,10 @@ jobs:
           if 'versionName = "0.6.25"' in gradle and 'versionCode = 2026110105' in gradle:
               gradle = gradle.replace('versionCode = 2026110105', 'versionCode = 2026110106', 1)
               gradle = gradle.replace('versionName = "0.6.25"', 'versionName = "0.6.26"', 1)
-          elif not ('versionName = "0.6.26"' in gradle and 'versionCode = 2026110106' in gradle):
+          elif not (
+              ('versionName = "0.6.26"' in gradle and 'versionCode = 2026110106' in gradle)
+              or ('versionName = "0.6.28"' in gradle and 'versionCode = 2026110108' in gradle)
+          ):
               raise SystemExit('Unexpected Wear version baseline; refusing an unsafe version edit')
           if 'geckoview-armeabi-v7a:159.0.20261022150525' not in gradle or 'abiFilters.add("armeabi-v7a")' not in gradle:
               raise SystemExit('The ARMv7 GeckoView dependency or ABI filter is missing')
@@ -2739,28 +2751,33 @@ jobs:
           assert 'windowSoftInputMode="adjustResize"' in manifest
           assert 'android.permission.INTERNET' in manifest
           assert 'geckoview-armeabi-v7a:159.0.20261022150525' in gradle and 'abiFilters.add("armeabi-v7a")' in gradle
-          assert 'versionName = "0.6.26"' in gradle and 'versionCode = 2026110106' in gradle
+          assert (
+              ('versionName = "0.6.26"' in gradle and 'versionCode = 2026110106' in gradle)
+              or ('versionName = "0.6.28"' in gradle and 'versionCode = 2026110108' in gradle)
+          )
           assert '账号密码登录（手表内）' in account
           assert '不调用系统 WebView' in about
           assert '手表内置 GeckoView 验证引擎' in more
+          assert 'const val WEAR_VERSION_NAME = "0.6.28"' in more
+          assert '酷安 Wear OS 版 0.6.28' in about
           print('PASS: login route is Core-API based and no system WebView is instantiated')
           print('PASS: CAPTCHA uses bundled GeckoRuntime + GeckoSession + GeckoView only')
           print('PASS: GeckoView uses TextureView plus a single opaque first-paint cover')
           print('PASS: NetEase CAPTCHA HTML, loader and proof-return link are preserved')
           print('PASS: CoolapkClient captchaVerifier is connected to WearCaptchaScreen')
           print('PASS: app GPU acceleration, IME resize and ARMv7 dependency are present')
-          print('PASS: version 0.6.26 / 2026110106 and user-facing labels are synchronized')
+          print('PASS: version 0.6.28 / 2026110108 and About/My version labels are synchronized')
           PY
           
           echo 'Wear OS 0.6.26 source patch and GeckoView wiring checks passed.'
           WEAR_0626_FIX
           bash "$RUNNER_TEMP/wear-os-0.6.26-runtime-fix.sh"
 
-      - name: Apply Wear OS 0.6.27 gallery back-navigation fix and Material 3 viewer
+      - name: Apply Wear OS 0.6.28 gallery back-navigation fix and Material 3 viewer
         shell: bash
         run: |
           set -euo pipefail
-          cat > "$RUNNER_TEMP/wear-os-0.6.27-gallery-fix.sh" <<'WEAR_0627_FIX'
+          cat > "$RUNNER_TEMP/wear-os-0.6.28-gallery-fix.sh" <<'WEAR_0627_FIX'
           #!/usr/bin/env bash
           set -euo pipefail
           ROOT="${GITHUB_WORKSPACE:-$(pwd)}"
@@ -3008,9 +3025,9 @@ jobs:
 
           gradle = gradle_path.read_text(encoding='utf-8')
           if 'versionName = "0.6.26"' in gradle and 'versionCode = 2026110106' in gradle:
-              gradle = gradle.replace('versionName = "0.6.26"', 'versionName = "0.6.27"', 1)
-              gradle = gradle.replace('versionCode = 2026110106', 'versionCode = 2026110107', 1)
-          elif not ('versionName = "0.6.27"' in gradle and 'versionCode = 2026110107' in gradle):
+              gradle = gradle.replace('versionName = "0.6.26"', 'versionName = "0.6.28"', 1)
+              gradle = gradle.replace('versionCode = 2026110106', 'versionCode = 2026110108', 1)
+          elif not ('versionName = "0.6.28"' in gradle and 'versionCode = 2026110108' in gradle):
               raise SystemExit('Unexpected version baseline; refusing to overwrite an unrelated version')
           if 'abiFilters.add("armeabi-v7a")' not in gradle or 'geckoview-armeabi-v7a:159.0.20261022150525' not in gradle:
               raise SystemExit('ARMv7 ABI filter or GeckoView dependency changed unexpectedly')
@@ -3028,30 +3045,30 @@ jobs:
               'multi_image_swipe_preserved': 'userScrollEnabled = urls.size > 1' in account,
               'material3_dynamic_surface_colors': 'MaterialTheme.colorScheme.surfaceContainerHigh' in account and 'MaterialTheme.colorScheme.onSurface' in account,
               'correct_back_stack_pop': 'if (!navController.popBackStack())' in app,
-              'new_version_name': 'versionName = "0.6.27"' in gradle,
-              'new_version_code': 'versionCode = 2026110107' in gradle,
+              'new_version_name': 'versionName = "0.6.28"' in gradle,
+              'new_version_code': 'versionCode = 2026110108' in gradle,
               'armv7_only_filter_preserved': 'abiFilters.add("armeabi-v7a")' in gradle,
           }
           for name, ok in checks.items():
               print(('PASS' if ok else 'FAIL') + ': ' + name)
           if not all(checks.values()):
               raise SystemExit('One or more gallery/navigation/version guards failed')
-          print('Wear OS 0.6.27 gallery back navigation + Material 3 patch applied.')
+          print('Wear OS 0.6.28 gallery back navigation + Material 3 patch applied.')
           PY
           WEAR_0627_FIX
-          bash "$RUNNER_TEMP/wear-os-0.6.27-gallery-fix.sh"
-      - name: Compile changed Wear OS 0.6.27 Kotlin sources before release (force compile)
+          bash "$RUNNER_TEMP/wear-os-0.6.28-gallery-fix.sh"
+      - name: Compile changed Wear OS 0.6.28 Kotlin sources before release (force compile)
         shell: bash
         run: ./gradlew :wear:compileReleaseKotlin --no-daemon --rerun-tasks --stacktrace --console=plain
-      - name: Build Wear OS 0.6.27 Material 3 32-bit ARMv7 release APK
+      - name: Build Wear OS 0.6.28 Material 3 32-bit ARMv7 release APK
         shell: bash
         run: bash .github/scripts/wear-apk-0.6.23/step-19.sh
-      - name: Verify APK 0.6.27 output and native ARMv7 ABI
+      - name: Verify APK 0.6.28 output and native ARMv7 ABI
         shell: bash
         run: bash .github/scripts/wear-apk-0.6.23/step-20.sh
       - name: Upload Wear APK
         uses: actions/upload-artifact@v7
         with:
-          name: Coolapk-WearOS-v0.6.27-GalleryBack-Material3-ARMv7-GalaxyWatch7
+          name: Coolapk-WearOS-v0.6.28-GalleryBack-Material3-ARMv7-GalaxyWatch7
           path: dist/
           if-no-files-found: error
