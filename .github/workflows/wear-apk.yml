@@ -23,7 +23,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/wear-apk-bundle"
-          base64 --decode <<'WEAR_APK_BUNDLE' | tar -xz -C "$GITHUB_WORKSPACE"          H4sIACnU5moC/+y9a3fcVLIwfD77VwidvBM1tNt2bgSDk3F8IZ5x4ry2Ce8shsdL7lbbwu1WH0kd
+          base64 --decode <<'WEAR_APK_BUNDLE' | tar -xz -C "$GITHUB_WORKSPACE"
+          H4sIACnU5moC/+y9a3fcVLIwfD77VwidvBM1tNt2bgSDk3F8IZ5x4ry2Ce8shsdL7lbbwu1WH0kd
           xxO8VrgEkuESGO4QDjAHmDxzhgQYBkIusNbzU2bStvOJ5ye8VbX3lrakLbW6bQfmMA0r7pb2tXbt
           2lW161JasP3F5nyfV3bthu/1rVim22s2lnr7SwdKe/b2eb7V6O0fKHmL/9b1px8+9+/fT3/hE/87
           MLB3QHxnzwf23b9/779p/f92Fz5Nzzdd6P7ffp4fz/K1XqvpaA27YVVNu9YzM/rruempqdkhfdeZ
@@ -2097,6 +2098,23 @@ jobs:
           WEAR_APK_BUNDLE
           test -f .github/scripts/wear-apk-0.6.23/step-21.sh
           chmod +x .github/scripts/wear-apk-0.6.23/*.sh
+
+      - name: Verify extracted Wear OS build scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          script_dir=".github/scripts/wear-apk-0.6.23"
+          test -d "$script_dir"
+          for number in $(seq -w 1 22); do
+            script="$script_dir/step-${number}.sh"
+            test -f "$script"
+            bash -n "$script"
+          done
+          actual="$(find "$script_dir" -maxdepth 1 -type f -name 'step-*.sh' | wc -l)"
+          if [[ "$actual" -ne 22 ]]; then
+            echo "Expected 22 Wear build scripts, found $actual" >&2
+            exit 1
+          fi
 
       - name: Set up JDK 21
         uses: actions/setup-java@v6
