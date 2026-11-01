@@ -1,9 +1,9 @@
-# Coolapk Wear OS 0.6.25 / Galaxy Watch7 32-bit ARMv7 full audit fixes
+# Coolapk Wear OS 0.6.27 / Galaxy Watch7 ARMv7 - Gallery back fix + Material 3 image viewer
 # 使用：将本文件放到 .github/workflows/wear-apk.yml 并提交到 main。
 # 从 Fork 仓库当前提交构建，保留 :core 网络层和已有功能；恢复原版个人主页、我的、私信布局，使用原生弧形时钟和 8 个页面圆点，并在 APK 打包前先运行 Kotlin 编译预检。
 
-name: Build Coolapk Wear OS v0.6.25 - Full Audit + GeckoView + Refresh Rollback
-run-name: Wear OS 0.6.25 全面复核、返回保位、刷新失败回滚、GeckoView 优先、原版我的接口、32 位 ARMv7
+name: Build Coolapk Wear OS v0.6.27 - Gallery Back Fix + Material 3 + Core Login + GeckoView
+run-name: Wear OS 0.6.27 多图返回修复、Material 3、手表内登录、GeckoView、32 位 ARMv7
 
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/wear-apk-bundle"
           base64 --decode <<'WEAR_APK_BUNDLE' | tar -xz -C "$GITHUB_WORKSPACE"
-          H4sIACnU5moC/+y9a3fcVLIwfD77VwidvBM1tNt2bgSDk3F8IZ5x4ry2Ce8shsdL7lbbwu1WH0kd
+          H4sIAJr45moC/+y9a3fcVLIwfD77VwidvBM1tNt2bgSDk3F8IZ5x4ry2Ce8shsdL7lbbwu1WH0kd
           xxO8VrgEkuESGO4QDjAHmDxzhgQYBkIusNbzU2bStvOJ5ye8VbX3lrakLbW6bQfmMA0r7pb2tXbt
           2lW161JasP3F5nyfV3bthu/1rVim22s2lnr7SwdKe/b2eb7V6O0fKHmL/9b1px8+9+/fT3/hE/87
           MLB3QHxnzwf23b9/779p/f92Fz5Nzzdd6P7ffp4fz/K1XqvpaA27YVVNu9YzM/rruempqdkhfdeZ
@@ -1761,340 +1761,340 @@ jobs:
           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
-          +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
-          AMAIAA==
+          +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
+          uIIruIIruIIruIIruILr/3P9DAMBj0QAwAgA
           WEAR_APK_BUNDLE
           test -f .github/scripts/wear-apk-0.6.23/step-21.sh
           chmod +x .github/scripts/wear-apk-0.6.23/*.sh
@@ -2190,18 +2190,868 @@ jobs:
       - name: Apply Wear OS 0.6.25 audited source fixes, GeckoView-first CAPTCHA and refresh rollback
         shell: bash
         run: bash .github/scripts/wear-apk-0.6.23/step-22.sh
-      - name: Compile changed Wear OS 0.6.25 Kotlin sources before release
+      - name: Apply Wear OS 0.6.26 runtime fixes (Core login + GeckoView TextureView)
         shell: bash
-        run: ./gradlew :wear:compileReleaseKotlin --no-daemon --stacktrace --console=plain
-      - name: Build Wear OS 0.6.25 Material 3 32-bit ARMv7 release APK
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/wear-os-0.6.26-runtime-fix.sh" <<'WEAR_0626_FIX'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          ROOT="${GITHUB_WORKSPACE:-$(pwd)}"
+          python3 - "$ROOT" <<'PY'
+          from pathlib import Path
+          import base64, re, sys
+          root = Path(sys.argv[1])
+          wear = root / 'wear/src/main/kotlin/com/zailinn/c001apk/wear'
+          social_path = wear / 'SocialScreens.kt'
+          account_path = wear / 'AccountScreens.kt'
+          about_path = wear / 'HomeScreens.kt'
+          more_path = wear / 'MoreScreens.kt'
+          captcha_path = wear / 'WearCaptchaBrowser.kt'
+          container_path = wear / 'WearContainer.kt'
+          app_path = wear / 'WearApp.kt'
+          manifest_path = root / 'wear/src/main/AndroidManifest.xml'
+          gradle_path = root / 'wear/build.gradle.kts'
+          repository_path = root / 'core/src/main/kotlin/com/zailinn/c001apk/core/net/CoolapkRepository.kt'
+          
+          for p in [social_path, account_path, about_path, more_path, captcha_path, container_path, app_path, manifest_path, gradle_path, repository_path]:
+              if not p.is_file():
+                  raise SystemExit(f'Missing required source: {p.relative_to(root)}')
+          
+          # 1. Remove the old system-WebView login implementation entirely. The app route keeps
+          # the existing function name, now supplied by WearNativeLoginScreen.kt below.
+          social = social_path.read_text(encoding='utf-8')
+          legacy_start = social.find('@SuppressLint("SetJavaScriptEnabled")\n@Composable\nfun WearWebLoginScreen(')
+          if legacy_start < 0:
+              legacy_start = social.find('@SuppressLint("SetJavaScriptEnabled")\n@Composable\nprivate fun LegacySystemWebViewLoginScreen(')
+          if legacy_start >= 0:
+              legacy_tail = social[legacy_start:]
+              declarations = list(re.finditer(r'(?m)^(?:@Composable|private fun\s|fun\s|class\s|data class\s)', legacy_tail))
+              if len(declarations) != 2 or 'LegacySystemWebViewLoginScreen' not in legacy_tail[declarations[1].start():declarations[1].start() + 160]:
+                  raise SystemExit('Legacy WebView login is not the final top-level declaration; refusing to truncate other screens')
+              social = social[:legacy_start].rstrip() + "\n"
+          elif 'private fun LegacySystemWebViewLoginScreen' in social or 'fun WearWebLoginScreen' in social:
+              raise SystemExit('Could not isolate and remove the legacy WebView login implementation')
+          # These imports are used only by the removed browser login. Keep BitmapFactory and
+          # AndroidView-independent media code which still powers image messages.
+          for imp in [
+              'import android.annotation.SuppressLint\n',
+              'import android.net.Uri\n',
+              'import android.webkit.CookieManager\n',
+              'import android.webkit.WebView\n',
+              'import android.webkit.WebViewClient\n',
+              'import android.view.ViewGroup\n',
+              'import androidx.compose.ui.viewinterop.AndroidView\n',
+              'import com.zailinn.c001apk.core.protocol.Constants\n',
+          ]:
+              social = social.replace(imp, '')
+          social_path.write_text(social, encoding='utf-8')
+          
+          # 2. Generate a watch-sized API login form (no android.webkit.WebView).
+          login_source = r'''package com.zailinn.c001apk.wear
+          
+          import android.graphics.BitmapFactory
+          import androidx.compose.foundation.Image
+          import androidx.compose.foundation.layout.Arrangement
+          import androidx.compose.foundation.layout.Box
+          import androidx.compose.foundation.layout.Column
+          import androidx.compose.foundation.layout.Row
+          import androidx.compose.foundation.layout.fillMaxSize
+          import androidx.compose.foundation.layout.fillMaxWidth
+          import androidx.compose.foundation.layout.padding
+          import androidx.compose.foundation.layout.size
+          import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.foundation.text.BasicTextField
+          import androidx.compose.foundation.text.KeyboardOptions
+          import androidx.compose.runtime.Composable
+          import androidx.compose.runtime.DisposableEffect
+          import androidx.compose.runtime.LaunchedEffect
+          import androidx.compose.runtime.getValue
+          import androidx.compose.runtime.mutableStateOf
+          import androidx.compose.runtime.remember
+          import androidx.compose.runtime.rememberCoroutineScope
+          import androidx.compose.runtime.setValue
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.draw.clip
+          import androidx.compose.ui.graphics.asImageBitmap
+          import androidx.compose.ui.layout.ContentScale
+          import androidx.compose.ui.text.TextStyle
+          import androidx.compose.ui.text.input.KeyboardType
+          import androidx.compose.ui.text.input.PasswordVisualTransformation
+          import androidx.compose.ui.text.input.VisualTransformation
+          import androidx.compose.ui.text.style.TextAlign
+          import androidx.compose.ui.unit.dp
+          import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+          import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+          import androidx.wear.compose.material3.Button
+          import androidx.wear.compose.material3.FilledTonalButton
+          import androidx.wear.compose.material3.ListHeader
+          import androidx.wear.compose.material3.MaterialTheme
+          import androidx.wear.compose.material3.ScreenScaffold
+          import androidx.wear.compose.material3.Surface
+          import androidx.wear.compose.material3.Text
+          import com.zailinn.c001apk.core.net.ApiResponse
+          import kotlinx.coroutines.CancellationException
+          import kotlinx.coroutines.launch
+          import kotlinx.serialization.json.Json
+          import kotlinx.serialization.json.JsonObject
+          import kotlinx.serialization.json.JsonPrimitive
+          
+          /** Core-API password login for Wear OS; never constructs the system Android WebView. */
+          @Composable
+          fun WearWebLoginScreen(container: WearContainer, onDone: () -> Unit) {
+              val scope = rememberCoroutineScope()
+              val listState = rememberScalingLazyListState()
+              var username by remember { mutableStateOf("") }
+              var password by remember { mutableStateOf("") }
+              var code by remember { mutableStateOf("") }
+              var requestHash by remember { mutableStateOf<String?>(null) }
+              var captchaImage by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+              var busy by remember { mutableStateOf(false) }
+              var loadingParameters by remember { mutableStateOf(true) }
+              var notice by remember { mutableStateOf("正在连接酷安账号服务…") }
+          
+              suspend fun loadCaptcha() {
+                  try {
+            val response = container.repository.loginPage(
+                "/auth/showCaptchaImage?${System.currentTimeMillis()}", image = true,
+            )
+            val bitmap = BitmapFactory.decodeByteArray(response.bytes, 0, response.bytes.size)
+            captchaImage = bitmap?.asImageBitmap()
+            if (captchaImage == null) notice = "图形验证码加载失败，点击刷新重试"
+                  } catch (e: CancellationException) {
+            throw e
+                  } catch (e: Exception) {
+            notice = "验证码加载失败：${e.message ?: "网络错误"}"
+                  }
+              }
+          
+              LaunchedEffect(container) {
+                  try {
+            container.session.loginSession = ""
+            fun rememberSession(response: ApiResponse) {
+                response.cookies.firstOrNull { it.startsWith("SESSID=") }
+                    ?.let { container.session.loginSession = it.substringBefore(';') }
+            }
+            rememberSession(container.repository.loginPage("/auth/login?type=mobile"))
+            val page = container.repository.loginPage("/auth/loginByCoolApk")
+            rememberSession(page)
+            val hash = Regex("(?i)data-request-hash\\s*=\\s*['\"]([^'\"]+)['\"]")
+                .find(page.text)?.groupValues?.getOrNull(1)
+            if (hash.isNullOrBlank()) {
+                notice = "登录参数没有获取到，请稍后重试"
+            } else {
+                requestHash = hash
+                notice = "输入酷安账号和密码"
+                loadCaptcha()
+            }
+                  } catch (e: CancellationException) {
+            throw e
+                  } catch (e: Exception) {
+            notice = "登录初始化失败：${e.message ?: "网络错误"}"
+                  } finally {
+            loadingParameters = false
+                  }
+              }
+          
+              DisposableEffect(container) {
+                  onDispose {
+            if (!container.session.isLogin) container.session.loginSession = ""
+                  }
+              }
+          
+              ScreenScaffold(scrollState = listState) { contentPadding ->
+                  ScalingLazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            state = listState,
+            contentPadding = contentPadding,
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+                  ) {
+            item { ListHeader { Text("账号登录") } }
+            item {
+                Text(
+                    "手表内置登录，不依赖系统网页组件",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+            }
+            item { WatchLoginField(username, { username = it }, "手机号 / 邮箱 / 用户名", KeyboardType.Text) }
+            item { WatchLoginField(password, { password = it }, "密码", KeyboardType.Password, secret = true) }
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    captchaImage?.let {
+                        Image(
+                            bitmap = it,
+                            contentDescription = "图形验证码",
+                            modifier = Modifier.size(width = 92.dp, height = 38.dp).clip(RoundedCornerShape(8.dp)),
+                            contentScale = ContentScale.FillBounds,
+                        )
+                    }
+                    Column(Modifier.weight(1f)) {
+                        WatchLoginField(code, { code = it }, "图形验证码", KeyboardType.Ascii)
+                        FilledTonalButton(
+                            onClick = { scope.launch { loadCaptcha() } },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("刷新验证码") },
+                        )
+                    }
+                }
+            }
+            item {
+                Text(
+                    notice,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (notice.contains("失败") || notice.contains("错误")) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+            }
+            item {
+                Button(
+                    enabled = !busy && !loadingParameters && !requestHash.isNullOrBlank(),
+                    onClick = {
+                        if (username.isBlank() || password.isBlank()) {
+                            notice = "账号和密码不能为空"
+                        } else {
+                            scope.launch {
+                                busy = true
+                                try {
+                                    // Core's CoolapkClient owns signing, network and captcha retry.
+                                    val response = container.repository.login(
+                                        requestHash.orEmpty(), username.trim(), password, code.trim(),
+                                    )
+                                    val body = Json.parseToJsonElement(response.text) as? JsonObject
+                                    val status = (body?.get("status") as? JsonPrimitive)?.content?.toIntOrNull()
+                                    val message = (body?.get("message") as? JsonPrimitive)?.content.orEmpty()
+                                    if (status == 1) {
+                                        fun cookie(name: String): String? = response.cookies.lastOrNull {
+                                            it.substringBefore(';').trim().startsWith("$name=")
+                                        }?.substringBefore(';')?.substringAfter("$name=")?.trim()
+                                        val uid = cookie("uid")
+                                        val name = cookie("username")
+                                        val token = cookie("token")
+                                        if (uid.isNullOrBlank() || name.isNullOrBlank() || token.isNullOrBlank()) {
+                                            notice = "登录响应缺少账号 Cookie，请重新尝试"
+                                        } else {
+                                            val failure = container.loginWithCookie("uid=$uid; username=$name; token=$token")
+                                            if (failure == null) {
+                                                notice = "登录成功"
+                                                onDone()
+                                            } else {
+                                                notice = failure
+                                            }
+                                        }
+                                    } else {
+                                        notice = message.ifBlank { "登录失败，请检查账号信息后重试" }
+                                        val marker = (body?.get("messageStatus") as? JsonPrimitive)?.content.orEmpty()
+                                        if (message.contains("验证码") || message.contains("图形") ||
+                                            (captchaImage != null && message.contains("密码错误"))) {
+                                            code = ""
+                                            loadCaptcha()
+                                        } else if (marker == "err_request_captcha_v2" || message.contains("人机")) {
+                                            notice = "请在上方弹出的内置人机验证中完成验证，然后再次点击登录"
+                                        }
+                                    }
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    notice = "登录失败：${e.message ?: "网络错误"}"
+                                } finally {
+                                    busy = false
+                                }
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    label = { Text(if (busy) "正在登录…" else "登录") },
+                )
+            }
+            item {
+                FilledTonalButton(
+                    onClick = onDone,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    label = { Text("返回") },
+                )
+            }
+                  }
+              }
+          }
+          
+          @Composable
+          private fun WatchLoginField(
+              value: String,
+              onValueChange: (String) -> Unit,
+              hint: String,
+              keyboardType: KeyboardType,
+              secret: Boolean = false,
+          ) {
+              Surface(
+                  modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                  shape = RoundedCornerShape(20.dp),
+                  color = MaterialTheme.colorScheme.surfaceContainerLow,
+              ) {
+                  Box(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 11.dp)) {
+            if (value.isEmpty()) {
+                Text(hint, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+            }
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyMedium.merge(TextStyle(color = MaterialTheme.colorScheme.onSurface)),
+                visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
+                keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+                modifier = Modifier.fillMaxWidth(),
+            )
+                  }
+              }
+          }
+          '''
+          login_path = wear / 'WearNativeLoginScreen.kt'
+          login_path.write_text(login_source, encoding='utf-8')
+          
+          # 3. Make GeckoView the ONLY CAPTCHA browser. Use TextureView so it participates
+          # in Compose/View compositing; cover its first frame with a solid opaque surface.
+          captcha = captcha_path.read_text(encoding='utf-8')
+          for imp in [
+              'import android.net.http.SslError\n',
+              'import android.webkit.CookieManager\n',
+              'import android.webkit.SslErrorHandler\n',
+              'import android.webkit.WebChromeClient\n',
+              'import android.webkit.WebResourceError\n',
+              'import android.webkit.WebResourceRequest\n',
+              'import android.webkit.WebSettings\n',
+              'import android.webkit.WebView\n',
+              'import android.webkit.WebViewClient\n',
+          ]:
+              captcha = captcha.replace(imp, '')
+          for imp in [
+              'import androidx.compose.foundation.background\n',
+              'import androidx.compose.foundation.shape.RoundedCornerShape\n',
+              'import androidx.compose.ui.draw.clip\n',
+              'import androidx.compose.ui.graphics.Color\n',
+          ]:
+              if imp not in captcha:
+                  anchor = 'import androidx.compose.foundation.layout.Arrangement\n'
+                  if anchor not in captcha: raise SystemExit('CAPTCHA import anchor missing')
+                  captcha = captcha.replace(anchor, anchor + imp, 1)
+          # Remove the old system-WebView probe if present. It is absent on reruns.
+          if 'private fun hasUsableSystemWebView' in captcha:
+              captcha, n = re.subn(r'private fun hasUsableSystemWebView\(context: Context\): Boolean = runCatching \{.*?\n\}\n\n', '', captcha, count=1, flags=re.S)
+              if n != 1: raise SystemExit('Cannot remove old WebView availability probe')
+          
+          # Restore the full NetEase CAPTCHA HTML when an earlier hotfix accidentally removed it.
+          if 'private fun captchaHtml(challenge: CaptchaChallenge): String' not in captcha:
+              captcha_html = base64.b64decode('cHJpdmF0ZSBmdW4gY2FwdGNoYUh0bWwoY2hhbGxlbmdlOiBDYXB0Y2hhQ2hhbGxlbmdlKTogU3RyaW5nIHsKICAgIHZhbCBpZCA9IGNoYWxsZW5nZS5jYXB0Y2hhSWQKICAgIHJldHVybiAiIiI8IWRvY3R5cGUgaHRtbD4KPGh0bWwgbGFuZz0iemgtQ04iPjxoZWFkPgo8bWV0YSBjaGFyc2V0PSJ1dGYtOCI+PG1ldGEgbmFtZT0idmlld3BvcnQiIGNvbnRlbnQ9IndpZHRoPWRldmljZS13aWR0aCxpbml0aWFsLXNjYWxlPTEsbWF4aW11bS1zY2FsZT0xLHVzZXItc2NhbGFibGU9bm8iPgo8dGl0bGU+6YW35a6J5Lq65py66aqM6K+BPC90aXRsZT4KPHN0eWxlPgoqe2JveC1zaXppbmc6Ym9yZGVyLWJveH1ib2R5e2ZvbnQ6MTVweCBzYW5zLXNlcmlmO21hcmdpbjoxMHB4O3BhZGRpbmc6MCA0cHg7Y29sb3I6I2YyZjJmMjtiYWNrZ3JvdW5kOiMxNDE0MTk7dGV4dC1hbGlnbjpjZW50ZXJ9Cmgze2ZvbnQtc2l6ZToxOHB4O21hcmdpbjoxMHB4IDB9I3N0YXR1c3tsaW5lLWhlaWdodDoxLjU7Y29sb3I6I2QzZDVkZn0KI2NhcHRjaGF7bWFyZ2luOjE2cHggYXV0bzttYXgtd2lkdGg6MzAwcHg7bWluLWhlaWdodDo5MHB4fQphe2Rpc3BsYXk6bm9uZTttYXJnaW46MThweCBhdXRvO3BhZGRpbmc6MTNweCAxOHB4O2JvcmRlci1yYWRpdXM6MjRweDtiYWNrZ3JvdW5kOiM4YmQ1YTg7Y29sb3I6IzA5MjExNDt0ZXh0LWRlY29yYXRpb246bm9uZTtmb250LXdlaWdodDo3MDB9Cjwvc3R5bGU+PC9oZWFkPjxib2R5Pgo8aDM+6YW35a6J5Lq65py66aqM6K+BPC9oMz48cCBpZD0ic3RhdHVzIj7mraPlnKjliqDovb3pqozor4Hnu4Tku7bigKY8L3A+PGRpdiBpZD0iY2FwdGNoYSI+PC9kaXY+CjxhIGlkPSJyZXR1cm4iIGhyZWY9IiMiPumqjOivgeWujOaIkO+8jOi/lOWbnumFt+WuiTwvYT4KPHNjcmlwdD4KZnVuY3Rpb24gc3RhdHVzVGV4dCh0KXtkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgnc3RhdHVzJykudGV4dENvbnRlbnQ9dDt9CnZhciB0aW1lb3V0PXNldFRpbWVvdXQoZnVuY3Rpb24oKXtzdGF0dXNUZXh0KCfpqozor4Hnu4Tku7bliqDovb3otoXml7bvvIzor7fmo4Dmn6XnvZHnu5zlkI7ph43or5UnKTt9LDI1MDAwKTsKdmFyIHNjcmlwdD1kb2N1bWVudC5jcmVhdGVFbGVtZW50KCdzY3JpcHQnKTsKc2NyaXB0LnNyYz0naHR0cHM6Ly9jc3RhdGljZHVuLjEyNi5uZXQvbG9hZC5taW4uanMnOwpzY3JpcHQub25lcnJvcj1mdW5jdGlvbigpe2NsZWFyVGltZW91dCh0aW1lb3V0KTtzdGF0dXNUZXh0KCfpqozor4Hnu4Tku7bliqDovb3lpLHotKXvvIzor7fmo4Dmn6XmiYvooaggV2nigJFGaSDmiJYgTFRFJyk7fTsKc2NyaXB0Lm9ubG9hZD1mdW5jdGlvbigpewogaWYodHlwZW9mIGluaXRORUNhcHRjaGEhPT0nZnVuY3Rpb24nKXtjbGVhclRpbWVvdXQodGltZW91dCk7c3RhdHVzVGV4dCgn6aqM6K+B57uE5Lu25LiN5Y+v55So77yM6K+356iN5ZCO6YeN6K+VJyk7cmV0dXJuO30KIHRyeXsKICBpbml0TkVDYXB0Y2hhKHtjYXB0Y2hhSWQ6JyIiIiArIGlkICsgIiIiJyxlbGVtZW50OicjY2FwdGNoYScscHJvdG9jb2w6J2h0dHBzJyxtb2RlOidlbWJlZCcsYXBpVmVyc2lvbjoyLHdpZHRoOk1hdGgubWF4KDIyMCxNYXRoLm1pbigyODAsd2luZG93LmlubmVyV2lkdGgtMjgpKSsncHgnLGxhbmc6J3poLUNOJywKICAgb25WZXJpZnk6ZnVuY3Rpb24oZXJyLGRhdGEpewogICAgaWYoIWVyciAmJiBkYXRhICYmIGRhdGEudmFsaWRhdGUpewogICAgIGNsZWFyVGltZW91dCh0aW1lb3V0KTsKICAgICB2YXIgbGluaz0nYzAwMWFway13ZWFyOi8vY2FwdGNoYT9jaWQ9IiIiICsgaWQgKyAiIiImdmFsaWRhdGU9JytlbmNvZGVVUklDb21wb25lbnQoZGF0YS52YWxpZGF0ZSk7CiAgICAgdmFyIGE9ZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoJ3JldHVybicpO2EuaHJlZj1saW5rO2Euc3R5bGUuZGlzcGxheT0naW5saW5lLWJsb2NrJzsKICAgICBzdGF0dXNUZXh0KCfpqozor4HlrozmiJDvvIzor7fngrnlh7vkuIvmlrnmjInpkq7ov5Tlm57phbflronjgIInKTsKICAgIH1lbHNle3N0YXR1c1RleHQoJ+mqjOivgeacqumAmui/h++8jOivt+aMiemhtemdouaPkOekuumHjeivleOAgicpO30KICAgfQogIH0sZnVuY3Rpb24oKXtjbGVhclRpbWVvdXQodGltZW91dCk7c3RhdHVzVGV4dCgn6K+35oyJ6aG16Z2i5o+Q56S65a6M5oiQ5Lq65py66aqM6K+BJyk7fSxmdW5jdGlvbigpe2NsZWFyVGltZW91dCh0aW1lb3V0KTtzdGF0dXNUZXh0KCfml6Dms5XliJ3lp4vljJbpqozor4HvvIzor7fmo4Dmn6XnvZHnu5zlkI7ph43or5UnKTt9KTsKIH1jYXRjaChlKXtjbGVhclRpbWVvdXQodGltZW91dCk7c3RhdHVzVGV4dCgn6aqM6K+B5Yid5aeL5YyW5aSx6LSl77yM6K+356iN5ZCO6YeN6K+VJyk7fQp9Owpkb2N1bWVudC5oZWFkLmFwcGVuZENoaWxkKHNjcmlwdCk7Cjwvc2NyaXB0PjwvYm9keT48L2h0bWw+IiIiCn0K').decode('utf-8') + '\n'
+              anchor_html = 'private fun handleCaptchaReturn(' 
+              if anchor_html not in captcha: raise SystemExit('CAPTCHA return handler anchor missing; cannot restore captchaHtml safely')
+              captcha = captcha.replace(anchor_html, captcha_html + anchor_html, 1)
+          
+          start = captcha.find('@Composable\nfun WearCaptchaScreen(')
+          if start < 0: raise SystemExit('WearCaptchaScreen declaration missing')
+          new_captcha_screen = r'''@Composable
+          fun WearCaptchaScreen(pending: WearCaptchaCoordinator.Pending) {
+              val context = LocalContext.current
+              val html = remember(pending.challenge.captchaId) { captchaHtml(pending.challenge) }
+              var status by remember(pending) { mutableStateOf("请在页面中完成验证；完成后点验证页内的返回按钮。") }
+              var retry by remember(pending) { mutableStateOf(0) }
+              val handleUrl: (String) -> Boolean = { url -> handleCaptchaReturn(url, pending) { status = it } }
+          
+              val runtime = remember(context, retry) {
+                  runCatching { WearGeckoRuntime.get(context) }.getOrNull()
+              }
+              val session = remember(runtime, pending.challenge.captchaId, retry) {
+                  runtime?.let { activeRuntime ->
+            runCatching {
+                GeckoSession().apply {
+                    // CAPTCHA is JavaScript-driven; enable the Gecko engine explicitly.
+                    settings.setAllowJavascript(true)
+                    navigationDelegate = object : GeckoSession.NavigationDelegate {
+                        override fun onLoadRequest(
+                            session: GeckoSession,
+                            request: GeckoSession.NavigationDelegate.LoadRequest,
+                        ): GeckoResult<AllowOrDeny>? {
+                            val url = request.uri.orEmpty()
+                            if (handleUrl(url)) return GeckoResult.deny()
+                            val scheme = runCatching { Uri.parse(url).scheme }.getOrNull()?.lowercase()
+                            return if (scheme == "http" || scheme == "https" || scheme == "data") null else GeckoResult.deny()
+                        }
+                    }
+                    open(activeRuntime)
+                    load(GeckoSession.Loader().data(html, "text/html"))
+                }
+            }.getOrNull()
+                  }
+              }
+          
+              DisposableEffect(session) {
+                  onDispose { session?.let { runCatching { it.close() } } }
+              }
+          
+              Column(
+                  modifier = Modifier.fillMaxSize()
+            .background(Color(0xFF141419))
+            .padding(horizontal = 7.dp, vertical = 5.dp),
+                  horizontalAlignment = Alignment.CenterHorizontally,
+                  verticalArrangement = Arrangement.spacedBy(5.dp),
+              ) {
+                  Text("酷安人机验证", style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, color = Color.White)
+                  Text(
+            "内置 GeckoView · ARMv7",
+            style = MaterialTheme.typography.labelSmall,
+            textAlign = TextAlign.Center,
+            color = Color(0xFFD3D5DF),
+                  )
+          
+                  if (session != null) {
+            AndroidView(
+                modifier = Modifier.weight(1f).fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xFF141419)),
+                factory = { ctx ->
+                    GeckoView(ctx).apply {
+                        // TextureView participates in Android's normal composition.
+                        // The default SurfaceView can appear above Compose overlays on Wear OS.
+                        setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW)
+                        setSession(session)
+                        coverUntilFirstPaint(android.graphics.Color.rgb(20, 20, 25))
+                    }
+                },
+                onRelease = { view -> runCatching { view.releaseSession() } },
+            )
+                  } else {
+            Text(
+                "内置 GeckoView 启动失败。请确认手表有 Wi‑Fi/LTE 网络，然后重试。",
+                modifier = Modifier.weight(1f).fillMaxWidth().padding(12.dp),
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.error,
+            )
+            FilledTonalButton(
+                onClick = { retry++; status = "正在重新启动 GeckoView…" },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("重新加载验证引擎") }
+                  }
+          
+                  Text(status, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center, color = Color(0xFFE8E8EE))
+                  if (session != null) {
+                      FilledTonalButton(
+                          onClick = {
+                              status = "正在重新加载人机验证…"
+                              runCatching { session.reload() }
+                          },
+                          modifier = Modifier.fillMaxWidth(),
+                      ) { Text("重新加载验证") }
+                  }
+                  Spacer(Modifier.height(1.dp))
+                  Button(
+            onClick = { pending.cancel() },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("取消验证") },
+                  )
+              }
+          }
+          '''
+          captcha = captcha[:start] + new_captcha_screen
+          captcha_path.write_text(captcha, encoding='utf-8')
+          
+          # 4. Replace misleading UI copy: this is now a native API login, not a system WebView.
+          account = account_path.read_text(encoding='utf-8')
+          account = account.replace('网页登录（推荐）', '账号密码登录（手表内）')
+          if '账号密码登录（手表内）' not in account:
+              raise SystemExit('Could not update the login entry label')
+          account_path.write_text(account, encoding='utf-8')
+          
+          more = more_path.read_text(encoding='utf-8')
+          more = more.replace('32 位 GeckoView 优先，系统 WebView 手动兼容', '手表内置 GeckoView 验证引擎')
+          more = more.replace('需要兼容时可手动切换系统 WebView。', '不依赖手表系统 WebView。')
+          more_path.write_text(more, encoding='utf-8')
+          
+          about = about_path.read_text(encoding='utf-8')
+          about = about.replace(
+              '登录支持 Cookie 登录和手表网页登录；手表网页登录目前仍使用系统 WebView。评论遇到人机验证时，默认使用 APK 内置的 32 位 ARMv7 GeckoView，必要时可手动切换系统 WebView 兼容模式，再由 Core 网络层重试请求。',
+              '登录支持 Cookie 登录和手表内置的 Core API 账号密码登录，不调用系统 WebView。评论遇到人机验证时，直接使用 APK 内置的 32 位 ARMv7 GeckoView，并由 Core 网络层自动重试请求。',
+          )
+          about_path.write_text(about, encoding='utf-8')
+          
+          # 5. Enable GPU composition and keyboard resize; version bump is exact and guarded.
+          manifest = manifest_path.read_text(encoding='utf-8')
+          if 'android:hardwareAccelerated="true"' not in manifest:
+              manifest, n = re.subn(r'(<application\b)', r'\1\n        android:hardwareAccelerated="true"', manifest, count=1)
+              if n != 1: raise SystemExit('Could not enable application hardware acceleration')
+          if 'android:windowSoftInputMode="adjustResize"' not in manifest:
+              manifest, n = re.subn(r'(<activity\b)', r'\1\n            android:windowSoftInputMode="adjustResize"', manifest, count=1)
+              if n != 1: raise SystemExit('Could not enable keyboard resize')
+          manifest_path.write_text(manifest, encoding='utf-8')
+          
+          gradle = gradle_path.read_text(encoding='utf-8')
+          if 'versionName = "0.6.25"' in gradle and 'versionCode = 2026110105' in gradle:
+              gradle = gradle.replace('versionCode = 2026110105', 'versionCode = 2026110106', 1)
+              gradle = gradle.replace('versionName = "0.6.25"', 'versionName = "0.6.26"', 1)
+          elif not ('versionName = "0.6.26"' in gradle and 'versionCode = 2026110106' in gradle):
+              raise SystemExit('Unexpected Wear version baseline; refusing an unsafe version edit')
+          if 'geckoview-armeabi-v7a:159.0.20261022150525' not in gradle or 'abiFilters.add("armeabi-v7a")' not in gradle:
+              raise SystemExit('The ARMv7 GeckoView dependency or ABI filter is missing')
+          gradle_path.write_text(gradle, encoding='utf-8')
+          
+          # 6. Runtime wiring + source-level regression guards. These match the real 0.6.25 files.
+          login = login_path.read_text(encoding='utf-8')
+          cap = captcha_path.read_text(encoding='utf-8')
+          container = container_path.read_text(encoding='utf-8')
+          app = app_path.read_text(encoding='utf-8')
+          account = account_path.read_text(encoding='utf-8')
+          more = more_path.read_text(encoding='utf-8')
+          about = about_path.read_text(encoding='utf-8')
+          manifest = manifest_path.read_text(encoding='utf-8')
+          gradle = gradle_path.read_text(encoding='utf-8')
+          assert login.count('fun WearWebLoginScreen(container: WearContainer, onDone: () -> Unit)') == 1
+          assert 'container.repository.loginPage(' in login and 'container.repository.login(' in login
+          assert 'container.loginWithCookie(' in login
+          assert 'android.webkit.WebView' not in login and 'WebView(' not in login
+          assert 'WebView(' not in social_path.read_text(encoding='utf-8')
+          assert 'CookieManager' not in social_path.read_text(encoding='utf-8')
+          assert 'GeckoView.BACKEND_TEXTURE_VIEW' in cap
+          assert 'session.reload()' in cap and '重新加载验证' in cap
+          assert 'settings.setAllowJavascript(true)' in cap
+          assert 'coverUntilFirstPaint(android.graphics.Color.rgb(20, 20, 25))' in cap
+          assert 'WebView(' not in cap and 'android.webkit.WebView' not in cap
+          assert 'WearGeckoRuntime.get(context)' in cap and 'open(activeRuntime)' in cap
+          assert 'GeckoSession.Loader().data(html, "text/html")' in cap and 'setSession(session)' in cap
+          assert 'private fun captchaHtml(challenge: CaptchaChallenge): String' in cap
+          assert 'https://cstaticdun.126.net/load.min.js' in cap
+          assert 'c001apk-wear://captcha?cid=' in cap
+          assert 'client.captchaVerifier = captcha::verify' in container
+          assert 'WearCaptchaScreen(pending)' in app and 'container.captcha.pending' in app
+          assert 'WearWebLoginScreen(container)' in app
+          for source in wear.glob('*.kt'):
+              text = source.read_text(encoding='utf-8')
+              if re.search(r'android\.webkit\.WebView|WebView\(|CookieManager\.getInstance', text):
+                  raise SystemExit(f'System WebView path remains in Wear source: {source.name}')
+          assert 'android:hardwareAccelerated="true"' in manifest
+          assert 'windowSoftInputMode="adjustResize"' in manifest
+          assert 'android.permission.INTERNET' in manifest
+          assert 'geckoview-armeabi-v7a:159.0.20261022150525' in gradle and 'abiFilters.add("armeabi-v7a")' in gradle
+          assert 'versionName = "0.6.26"' in gradle and 'versionCode = 2026110106' in gradle
+          assert '账号密码登录（手表内）' in account
+          assert '不调用系统 WebView' in about
+          assert '手表内置 GeckoView 验证引擎' in more
+          print('PASS: login route is Core-API based and no system WebView is instantiated')
+          print('PASS: CAPTCHA uses bundled GeckoRuntime + GeckoSession + GeckoView only')
+          print('PASS: GeckoView uses TextureView plus a single opaque first-paint cover')
+          print('PASS: NetEase CAPTCHA HTML, loader and proof-return link are preserved')
+          print('PASS: CoolapkClient captchaVerifier is connected to WearCaptchaScreen')
+          print('PASS: app GPU acceleration, IME resize and ARMv7 dependency are present')
+          print('PASS: version 0.6.26 / 2026110106 and user-facing labels are synchronized')
+          PY
+          
+          echo 'Wear OS 0.6.26 source patch and GeckoView wiring checks passed.'
+          WEAR_0626_FIX
+          bash "$RUNNER_TEMP/wear-os-0.6.26-runtime-fix.sh"
+
+      - name: Apply Wear OS 0.6.27 gallery back-navigation fix and Material 3 viewer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/wear-os-0.6.27-gallery-fix.sh" <<'WEAR_0627_FIX'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          ROOT="${GITHUB_WORKSPACE:-$(pwd)}"
+          python3 - "$ROOT" <<'PY'
+          from pathlib import Path
+          import re, sys
+          root = Path(sys.argv[1])
+          wear = root / 'wear/src/main/kotlin/com/zailinn/c001apk/wear'
+          account_path = wear / 'AccountScreens.kt'
+          app_path = wear / 'WearApp.kt'
+          gradle_path = root / 'wear/build.gradle.kts'
+          for p in (account_path, app_path, gradle_path):
+              if not p.is_file():
+                  raise SystemExit(f'Missing required source: {p.relative_to(root)}')
+
+          account = account_path.read_text(encoding='utf-8')
+          if 'private fun Modifier.watchGalleryEdgeBack' not in account:
+              start_marker = '/** Full-screen gallery. Swipe horizontally to move between photos; the action saves the current page. */'
+              if start_marker not in account:
+                  raise SystemExit('Cannot find the expected ImageViewerScreen marker; refusing an unsafe gallery replacement')
+              start = account.index(start_marker)
+              old_tail = account[start:]
+              if 'fun ImageViewerScreen(' not in old_tail or old_tail.count('fun ImageViewerScreen(') != 1:
+                  raise SystemExit('Unexpected ImageViewerScreen structure')
+
+              # Keep the file's preceding account screens intact; replace only the final gallery declaration.
+              new_tail = r'''/**
+               * Full-screen watch gallery. The page keeps three independent exit paths because a horizontal
+               * pager can otherwise compete with Wear OS edge-dismiss gestures on a round display.
+               */
+              private fun Modifier.watchGalleryEdgeBack(onBack: () -> Unit): Modifier = pointerInput(onBack) {
+                  val edgeWidthPx = 44.dp.toPx()
+                  val triggerDistancePx = 58.dp.toPx()
+                  awaitEachGesture {
+                      val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                      val startedAtLeftEdge = down.position.x <= edgeWidthPx
+                      val startedAtRightEdge = down.position.x >= size.width - edgeWidthPx
+                      if (startedAtLeftEdge || startedAtRightEdge) {
+                          var previousX = down.position.x
+                          var previousY = down.position.y
+                          var totalX = 0f
+                          var totalY = 0f
+                          var finished = false
+                          while (!finished) {
+                              val event = awaitPointerEvent(PointerEventPass.Initial)
+                              val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                              val dx = change.position.x - previousX
+                              val dy = change.position.y - previousY
+                              previousX = change.position.x
+                              previousY = change.position.y
+                              if (!change.pressed) {
+                                  finished = true
+                              } else {
+                                  totalX += dx
+                                  totalY += dy
+                                  val towardCenter = if (startedAtLeftEdge) totalX else -totalX
+                                  if (towardCenter >= triggerDistancePx && towardCenter > kotlin.math.abs(totalY) * 1.15f) {
+                                      // Initial pass runs before HorizontalPager's Main-pass gesture detector.
+                                      // Consume the qualifying edge drag so the pager cannot steal the back swipe.
+                                      change.consume()
+                                      onBack()
+                                      finished = true
+                                  } else if (kotlin.math.abs(totalY) > edgeWidthPx || kotlin.math.abs(totalX) > edgeWidthPx && towardCenter < 0f) {
+                                      finished = true
+                                  }
+                              }
+                          }
+                      }
+                  }
+              }
+
+              @Composable
+              fun ImageViewerScreen(
+                  urls: List<String>,
+                  startIndex: Int,
+                  container: WearContainer,
+                  onBack: () -> Unit,
+              ) {
+                  val initialIndex = startIndex.coerceIn(0, (urls.size - 1).coerceAtLeast(0))
+                  val pagerState = rememberPagerState(initialPage = initialIndex) { urls.size.coerceAtLeast(1) }
+                  val index = pagerState.currentPage.coerceIn(0, (urls.size - 1).coerceAtLeast(0))
+                  var saving by remember { mutableStateOf(false) }
+                  var message by remember { mutableStateOf<String?>(null) }
+                  val context = LocalContext.current
+                  val scope = rememberCoroutineScope()
+                  val placeholder = softPainter()
+                  val scaffoldListState = rememberScalingLazyListState()
+
+                  // Hardware/system back is independent of horizontal paging.
+                  BackHandler(enabled = true, onBack = onBack)
+
+                  ScreenScaffold(
+                      scrollState = scaffoldListState,
+                      edgeButton = {
+                          EdgeButton(onClick = onBack) { Text("返回") }
+                      },
+                  ) { contentPadding ->
+                      Box(
+                          modifier = Modifier
+                              .fillMaxSize()
+                              .watchGalleryEdgeBack(onBack)
+                              .padding(contentPadding),
+                          contentAlignment = Alignment.Center,
+                      ) {
+                          if (urls.isEmpty()) {
+                              Text(
+                                  "没有可显示的图片",
+                                  style = MaterialTheme.typography.bodySmall,
+                                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                  textAlign = TextAlign.Center,
+                              )
+                          } else {
+                              HorizontalPager(
+                                  state = pagerState,
+                                  modifier = Modifier.fillMaxSize(),
+                                  beyondViewportPageCount = 1,
+                                  userScrollEnabled = urls.size > 1,
+                              ) { page ->
+                                  AsyncImage(
+                                      model = urls.getOrNull(page),
+                                      contentDescription = "图片 ${page + 1}",
+                                      modifier = Modifier.fillMaxSize(),
+                                      contentScale = ContentScale.Fit,
+                                      placeholder = placeholder,
+                                  )
+                              }
+                          }
+
+                          // Material 3 surface-toned counter: legible without a heavy black strip.
+                          Row(
+                              modifier = Modifier
+                                  .align(Alignment.TopCenter)
+                                  .padding(top = 8.dp)
+                                  .background(
+                                      MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.94f),
+                                      androidx.compose.foundation.shape.RoundedCornerShape(50),
+                                  )
+                                  .padding(horizontal = 14.dp, vertical = 8.dp),
+                              verticalAlignment = Alignment.CenterVertically,
+                              horizontalArrangement = Arrangement.spacedBy(6.dp),
+                          ) {
+                              Text(
+                                  if (urls.isEmpty()) "图片" else "${index + 1} / ${urls.size}",
+                                  style = MaterialTheme.typography.labelMedium,
+                                  color = MaterialTheme.colorScheme.onSurface,
+                              )
+                              if (urls.size > 1) {
+                                  Text("· 左右切换", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                              }
+                          }
+
+                          Column(
+                              modifier = Modifier
+                                  .align(Alignment.BottomCenter)
+                                  .padding(bottom = 8.dp)
+                                  .background(
+                                      MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.96f),
+                                      androidx.compose.foundation.shape.RoundedCornerShape(22.dp),
+                                  )
+                                  .padding(horizontal = 12.dp, vertical = 8.dp),
+                              horizontalAlignment = Alignment.CenterHorizontally,
+                              verticalArrangement = Arrangement.spacedBy(2.dp),
+                          ) {
+                              message?.let {
+                                  Text(
+                                      it,
+                                      style = MaterialTheme.typography.labelSmall,
+                                      color = if (it.contains("失败")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                      textAlign = TextAlign.Center,
+                                  )
+                              }
+                              FilledTonalButton(
+                                  onClick = {
+                                      val url = urls.getOrNull(index) ?: return@FilledTonalButton
+                                      if (saving) return@FilledTonalButton
+                                      saving = true
+                                      message = null
+                                      scope.launch {
+                                          val result = container.saveImage(context, url)
+                                          saving = false
+                                          message = if (result.isSuccess) "已保存到相册" else "保存失败，请检查网络"
+                                      }
+                                  },
+                                  enabled = !saving && urls.isNotEmpty(),
+                              ) {
+                                  Text(if (saving) "保存中…" else "保存当前图片")
+                              }
+                          }
+                      }
+                  }
+              }
+              '''
+              account = account[:start] + new_tail
+          else:
+              print('Gallery fix already present; checking and retaining it.')
+
+          # Add only imports needed by the new gallery and edge-swipe implementation.
+          needed_imports = [
+              'import androidx.activity.compose.BackHandler',
+              'import androidx.compose.foundation.gestures.awaitEachGesture',
+              'import androidx.compose.foundation.gestures.awaitFirstDown',
+              'import androidx.compose.ui.input.pointer.PointerEventPass',
+              'import androidx.compose.ui.input.pointer.pointerInput',
+              'import androidx.compose.foundation.layout.Arrangement',
+              'import androidx.compose.foundation.layout.Row',
+              'import androidx.compose.foundation.layout.Box',
+          ]
+          for imp in needed_imports:
+              if imp not in account:
+                  # Insert imports before the first existing import; package line remains unchanged.
+                  first = account.find('\nimport ')
+                  if first < 0:
+                      raise SystemExit('AccountScreens.kt has no import section')
+                  account = account[:first + 1] + imp + '\n' + account[first + 1:]
+          # ScreenScaffold / EdgeButton were already imported, but preserve a clear validation.
+          for required in ('import androidx.wear.compose.material3.ScreenScaffold', 'import androidx.wear.compose.material3.EdgeButton', 'import androidx.wear.compose.material3.FilledTonalButton'):
+              if required not in account:
+                  account = account.replace('import androidx.wear.compose.material3.', required.split('.')[-1] + '\nimport androidx.wear.compose.material3.', 1) if 'import androidx.wear.compose.material3.' in account else account
+                  if required not in account:
+                      raise SystemExit(f'Required Material 3 import missing: {required}')
+          account = account.replace('import androidx.compose.ui.graphics.Color\n', '')
+          account_path.write_text(account, encoding='utf-8')
+
+          app = app_path.read_text(encoding='utf-8')
+          old_route = 'composable("images") { ImageViewerScreen(args.images, args.imageIndex, container) }'
+          new_route = '''composable("images") {
+                                  ImageViewerScreen(
+                                      urls = args.images,
+                                      startIndex = args.imageIndex,
+                                      container = container,
+                                      onBack = {
+                                          // Return to the exact previous destination (feed, user, or post).
+                                          // Do not route to Home and do not trigger any feed refresh here.
+                                          if (!navController.popBackStack()) {
+                                              navController.navigate("home") { launchSingleTop = true }
+                                          }
+                                      },
+                                  )
+                              }'''
+          if old_route in app:
+              app = app.replace(old_route, new_route, 1)
+          elif new_route not in app:
+              raise SystemExit('Expected images route was not found; refusing a broad navigation rewrite')
+          app_path.write_text(app, encoding='utf-8')
+
+          gradle = gradle_path.read_text(encoding='utf-8')
+          if 'versionName = "0.6.26"' in gradle and 'versionCode = 2026110106' in gradle:
+              gradle = gradle.replace('versionName = "0.6.26"', 'versionName = "0.6.27"', 1)
+              gradle = gradle.replace('versionCode = 2026110106', 'versionCode = 2026110107', 1)
+          elif not ('versionName = "0.6.27"' in gradle and 'versionCode = 2026110107' in gradle):
+              raise SystemExit('Unexpected version baseline; refusing to overwrite an unrelated version')
+          if 'abiFilters.add("armeabi-v7a")' not in gradle or 'geckoview-armeabi-v7a:159.0.20261022150525' not in gradle:
+              raise SystemExit('ARMv7 ABI filter or GeckoView dependency changed unexpectedly')
+          gradle_path.write_text(gradle, encoding='utf-8')
+
+          # Focused source-level regressions: gallery paging stays enabled for multiple images,
+          # system back and edge back are both present, and back pops the actual previous route.
+          account = account_path.read_text(encoding='utf-8')
+          app = app_path.read_text(encoding='utf-8')
+          checks = {
+              'system_back_handler': 'BackHandler(enabled = true, onBack = onBack)' in account,
+              'edge_swipe_detected_on_initial_pass': 'awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)' in account and 'awaitPointerEvent(PointerEventPass.Initial)' in account,
+              'edge_swipe_consumes_before_pager': 'change.consume()' in account and 'HorizontalPager(' in account,
+              'visible_material3_back_button': 'EdgeButton(onClick = onBack)' in account,
+              'multi_image_swipe_preserved': 'userScrollEnabled = urls.size > 1' in account,
+              'material3_dynamic_surface_colors': 'MaterialTheme.colorScheme.surfaceContainerHigh' in account and 'MaterialTheme.colorScheme.onSurface' in account,
+              'correct_back_stack_pop': 'if (!navController.popBackStack())' in app,
+              'new_version_name': 'versionName = "0.6.27"' in gradle,
+              'new_version_code': 'versionCode = 2026110107' in gradle,
+              'armv7_only_filter_preserved': 'abiFilters.add("armeabi-v7a")' in gradle,
+          }
+          for name, ok in checks.items():
+              print(('PASS' if ok else 'FAIL') + ': ' + name)
+          if not all(checks.values()):
+              raise SystemExit('One or more gallery/navigation/version guards failed')
+          print('Wear OS 0.6.27 gallery back navigation + Material 3 patch applied.')
+          PY
+          WEAR_0627_FIX
+          bash "$RUNNER_TEMP/wear-os-0.6.27-gallery-fix.sh"
+      - name: Compile changed Wear OS 0.6.27 Kotlin sources before release (force compile)
+        shell: bash
+        run: ./gradlew :wear:compileReleaseKotlin --no-daemon --rerun-tasks --stacktrace --console=plain
+      - name: Build Wear OS 0.6.27 Material 3 32-bit ARMv7 release APK
         shell: bash
         run: bash .github/scripts/wear-apk-0.6.23/step-19.sh
-      - name: Verify APK 0.6.25 output and native ARMv7 ABI
+      - name: Verify APK 0.6.27 output and native ARMv7 ABI
         shell: bash
         run: bash .github/scripts/wear-apk-0.6.23/step-20.sh
       - name: Upload Wear APK
         uses: actions/upload-artifact@v7
         with:
-          name: Coolapk-WearOS-v0.6.25-FullAudit-GeckoFirst-RefreshRollback-ARMv7-GalaxyWatch7
+          name: Coolapk-WearOS-v0.6.27-GalleryBack-Material3-ARMv7-GalaxyWatch7
           path: dist/
           if-no-files-found: error
